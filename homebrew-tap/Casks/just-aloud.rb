@@ -7,9 +7,17 @@ cask "just-aloud" do
   desc "Read selected text aloud with playback controls"
   homepage "https://github.com/Kian-hdr/just-aloud"
 
-  depends_on macos: ">= :ventura"
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  depends_on macos: :ventura
+
   app "Just Aloud.app"
+
   uninstall quit: "space.exlumina.justaloud"
+
   zap trash: [
     "~/.config/just-aloud",
     "~/.local/bin/just-aloud",
@@ -19,13 +27,8 @@ cask "just-aloud" do
     "~/.local/bin/just-aloud-tts-server.py",
     "~/.local/bin/just-aloud-uninstall",
     "~/.local/share/just-aloud",
-    "~/Library/Services/Speak Selection with Just Aloud.workflow",
     "~/Library/Preferences/space.exlumina.justaloud.plist",
     "~/Library/Saved Application State/space.exlumina.justaloud.savedState",
+    "~/Library/Services/Speak Selection with Just Aloud.workflow",
   ]
-
-  livecheck do
-    url :url
-    strategy :github_latest
-  end
 end
