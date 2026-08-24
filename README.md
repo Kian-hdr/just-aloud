@@ -34,11 +34,12 @@ private multi-voice library.
 
 ## Install
 
-### Release candidate
+### Direct download
 
-The source repository is public, but no downloadable release or Homebrew cask
-exists yet. Installation must not be described as generally available until a
-signed and notarized artifact is published with its real checksum.
+Download `Just-Aloud-0.9.0.zip` from the
+[latest release](https://github.com/Kian-hdr/just-aloud/releases/latest), open
+the ZIP, and move **Just Aloud.app** to Applications. The release is signed with
+Kian Konrad Tajbakhsh's Developer ID certificate and notarized by Apple.
 
 For a local source build:
 
@@ -53,18 +54,15 @@ For the interactive source installer, double-click `install.command` or run:
 ./install.command
 ```
 
-### Future Homebrew installation
-
-After a notarized release and populated cask are published, the intended command
-is:
+### Homebrew installation
 
 ```bash
 brew tap Kian-hdr/tap
 brew install --cask just-aloud
 ```
 
-The placeholder cask in `homebrew-tap/Casks/just-aloud.rb` is intentionally not
-installable yet.
+Homebrew installs the same signed and notarized application published on the
+GitHub release.
 
 ## ElevenLabs setup
 

@@ -1,11 +1,11 @@
 cask "just-aloud" do
-  version "REPLACE_WITH_RELEASE_VERSION"
-  sha256 "REPLACE_WITH_RELEASE_SHA256"
+  version "0.9.0"
+  sha256 "1ab1f5469e7dbaf538327c435d83830d0cdd00d9e5edfdddce2f8e85b7d64be1"
 
-  url "https://github.com/REPLACE_WITH_GITHUB_ACCOUNT/just-aloud/releases/download/v#{version}/Just-Aloud-#{version}.zip"
+  url "https://github.com/Kian-hdr/just-aloud/releases/download/v#{version}/Just-Aloud-#{version}.zip"
   name "Just Aloud"
   desc "Read selected text aloud with playback controls"
-  homepage "https://github.com/REPLACE_WITH_GITHUB_ACCOUNT/just-aloud"
+  homepage "https://github.com/Kian-hdr/just-aloud"
 
   depends_on macos: ">= :ventura"
   app "Just Aloud.app"
