@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="waves" x1="682" y1="362" x2="816" y2="680" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38BEC4"/>
+      <stop offset="1" stop-color="#6BD8CE"/>
+    </linearGradient>
+  </defs>
+  <path d="M680 427C728 475 728 549 680 597" fill="none" stroke="url(#waves)" stroke-width="60" stroke-linecap="round"/>
+  <path d="M758 363C842 447 842 577 758 661" fill="none" stroke="url(#waves)" stroke-width="68" stroke-linecap="round"/>
+</svg>

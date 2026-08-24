@@ -1,6 +1,34 @@
 # macOS
 .DS_Store
 
+# Credentials and machine-local configuration
+.env
+.env.*
+*.local
+*.config
+config
+config.*
+*.key
+*.pem
+*.p12
+*.p8
+*.cer
+*.mobileprovision
+*.keychain-db
+
+# Logs, caches, and backups
+*.log
+*.cache
+*.bak
+*.backup
+*.old
+*.orig
+*.tmp
+.cache/
+.pytest_cache/
+.mypy_cache/
+backups/
+
 # Swift build artifacts
 *.o
 *.swiftmodule
@@ -8,15 +36,36 @@
 *.dSYM/
 .build/
 .swiftpm/
+build/
+artifacts/
 
 # App bundles and CLI tools (built during install, not tracked)
 *.app
-speak11-audio
+*.dmg
+*.pkg
+*.zip
+just-aloud
+just-aloud-audio
+dependency-audit/
 
 # Python
 __pycache__/
+*.pyc
 .venv/
 
 # IDE
 .vscode/
 .idea/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Local signing, notarization, and release metadata
+notary-*.json
+submission-*.json
+*.sha256
+
+# Personal application state
+.config/
+.local/
+Library/

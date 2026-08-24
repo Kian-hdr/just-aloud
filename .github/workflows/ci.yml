@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+      - name: Fetch stable upstream tag
+        run: git fetch --tags https://github.com/smcantab/speak11.git v1.1.0
+      - name: Verify source
+        run: ./scripts/verify.sh
+      - name: Build unsigned app
+        run: ./scripts/build.sh
+      - name: Verify bundle identity
+        run: |
+          test "$(defaults read "$PWD/build/Just Aloud.app/Contents/Info" CFBundleIdentifier)" = "space.exlumina.justaloud"
+          test "$(defaults read "$PWD/build/Just Aloud.app/Contents/Info" LSUIElement)" = "1"

@@ -1,0 +1,17 @@
+title = "Just Aloud secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public preset voice IDs inherited from Speak11 v1.1.0"
+paths = ['''JustAloud\.swift''', '''install\.command''', '''just-aloud\.sh''']
+regexes = [
+  '''pFZP5JQG7iQjIQuC4Bku''',
+  '''Xb7hH8MSUJpSbSDYk0k2''',
+  '''21m00Tcm4TlvDq8ikWAM''',
+  '''pNInz6obpgDQGcFmaJgB''',
+  '''AZnzlk1XvdvUeBnXmlld''',
+  '''TxGEqnHWrfWFTfGW9XjX''',
+  '''yoZ06aMxZJJ28mfd3POQ''',
+]

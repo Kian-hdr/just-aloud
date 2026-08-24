@@ -1,12 +1,29 @@
 import Cocoa
 import ApplicationServices
 import CoreAudio
+import Darwin
+import Security
 
 // MARK: - Config paths
 
-private let configDir  = (NSHomeDirectory() as NSString).appendingPathComponent(".config/speak11")
+private let configDir: String = {
+    if let override = ProcessInfo.processInfo.environment["JUST_ALOUD_CONFIG_DIR"],
+       !override.isEmpty { return override }
+    return (NSHomeDirectory() as NSString).appendingPathComponent(".config/just-aloud")
+}()
 private let configPath = (configDir as NSString).appendingPathComponent("config")
-private let speakPath  = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/speak.sh")
+private let speakPath: String = {
+    let userInstall = (NSHomeDirectory() as NSString)
+        .appendingPathComponent(".local/bin/just-aloud")
+    if FileManager.default.isExecutableFile(atPath: userInstall) { return userInstall }
+    return Bundle.main.path(forResource: "just-aloud", ofType: nil) ?? userInstall
+}()
+private let audioControlPath = (NSTemporaryDirectory() as NSString)
+    .appendingPathComponent("just_aloud_audio_control")
+private let speechPIDPath = (NSTemporaryDirectory() as NSString)
+    .appendingPathComponent("just_aloud_tts.pid")
+private let playbackStatePath = (NSTemporaryDirectory() as NSString)
+    .appendingPathComponent("just_aloud_audio_state")
 
 // MARK: - Config model
 
@@ -17,6 +34,8 @@ struct Config {
 
     // ElevenLabs settings
     var voiceId:         String = "pFZP5JQG7iQjIQuC4Bku"
+    var customVoiceIds:  [String] = []
+    var customVoiceNames: [String: String] = [:]
     var modelId:         String = "eleven_flash_v2_5"
     var stability:       Double = 0.5
     var similarityBoost: Double = 0.75
@@ -30,12 +49,16 @@ struct Config {
     // ElevenLabs speed (shared name kept for config compat)
     var speed:           Double = 1.0
 
+    // Pitch-preserving local playback multiplier. The effective cloud speed is
+    // SPEED × PLAYBACK_SPEED and is exposed as one native slider.
+    var playbackSpeed:   Double = 1.0
+
     // Inter-sentence pause (milliseconds at 1.0x speed, scales with speed)
     var sentencePause:   Int    = 400
 
-    static func load() -> Config {
+    static func load(from path: String = configPath) -> Config {
         var c = Config()
-        guard let raw = try? String(contentsOfFile: configPath, encoding: .utf8) else { return c }
+        guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else { return c }
         for line in raw.components(separatedBy: .newlines) {
             let line = line.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("#"),
@@ -53,34 +76,65 @@ struct Config {
             case "TTS_BACKEND":          c.ttsBackend        = value
             case "TTS_BACKENDS_INSTALLED":c.backendsInstalled = value
             case "VOICE_ID":             c.voiceId            = value
+            case "CUSTOM_VOICE_IDS":
+                c.customVoiceIds = value.split(separator: ",")
+                    .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            case "CUSTOM_VOICE_NAMES_B64":
+                for entry in value.split(separator: ",") {
+                    guard let separator = entry.firstIndex(of: ":") else { continue }
+                    let id = String(entry[..<separator])
+                    let encodedName = String(entry[entry.index(after: separator)...])
+                    guard !id.isEmpty,
+                          let data = Data(base64Encoded: encodedName),
+                          let name = String(data: data, encoding: .utf8),
+                          !name.isEmpty else { continue }
+                    c.customVoiceNames[id] = name
+                }
             case "MODEL_ID":             c.modelId            = value
             case "STABILITY":            c.stability          = Double(value) ?? c.stability
             case "SIMILARITY_BOOST":     c.similarityBoost    = Double(value) ?? c.similarityBoost
             case "STYLE":                c.style              = Double(value) ?? c.style
             case "USE_SPEAKER_BOOST":    c.useSpeakerBoost    = value == "true" || value == "1"
             case "SPEED":                c.speed              = Double(value) ?? c.speed
+            case "PLAYBACK_SPEED":       c.playbackSpeed      = Double(value) ?? c.playbackSpeed
             case "LOCAL_VOICE":          c.localVoice         = value
             case "LOCAL_SPEED":          c.localSpeed         = Double(value) ?? c.localSpeed
             case "SENTENCE_PAUSE":       c.sentencePause      = Int(value) ?? c.sentencePause
             default: break
             }
         }
+        if !c.voiceId.isEmpty,
+           !knownVoices.contains(where: { $0.id == c.voiceId }),
+           !c.customVoiceIds.contains(c.voiceId) {
+            c.customVoiceIds.append(c.voiceId)
+        }
+        var seen = Set<String>()
+        c.customVoiceIds = c.customVoiceIds.filter { seen.insert($0).inserted }
+        c.customVoiceNames = c.customVoiceNames.filter { c.customVoiceIds.contains($0.key) }
         return c
     }
 
     func save() {
         try? FileManager.default.createDirectory(
             atPath: configDir, withIntermediateDirectories: true, attributes: nil)
+        let encodedVoiceNames = customVoiceIds.compactMap { id -> String? in
+            guard let name = customVoiceNames[id], !name.isEmpty else { return nil }
+            return "\(id):\(Data(name.utf8).base64EncodedString())"
+        }.joined(separator: ",")
         let lines = [
             "TTS_BACKEND=\"\(ttsBackend)\"",
             "TTS_BACKENDS_INSTALLED=\"\(backendsInstalled)\"",
             "VOICE_ID=\"\(voiceId)\"",
+            "CUSTOM_VOICE_IDS=\"\(customVoiceIds.joined(separator: ","))\"",
+            "CUSTOM_VOICE_NAMES_B64=\"\(encodedVoiceNames)\"",
             "MODEL_ID=\"\(modelId)\"",
             "STABILITY=\"\(String(format: "%.2f", stability))\"",
             "SIMILARITY_BOOST=\"\(String(format: "%.2f", similarityBoost))\"",
             "STYLE=\"\(String(format: "%.2f", style))\"",
             "USE_SPEAKER_BOOST=\"\(useSpeakerBoost ? "true" : "false")\"",
             "SPEED=\"\(String(format: "%.2f", speed))\"",
+            "PLAYBACK_SPEED=\"\(String(format: "%.2f", playbackSpeed))\"",
             "LOCAL_VOICE=\"\(localVoice)\"",
             "LOCAL_SPEED=\"\(String(format: "%.2f", localSpeed))\"",
             "SENTENCE_PAUSE=\"\(sentencePause)\"",
@@ -92,15 +146,15 @@ struct Config {
 
 // MARK: - Static data
 
-// ElevenLabs voices
+// Public preset voices preserved from the stable upstream Speak11 release.
 private let knownVoices: [(name: String, id: String)] = [
-    ("Lily — British, raspy",     "pFZP5JQG7iQjIQuC4Bku"),
-    ("Alice — British, confident","Xb7hH8MSUJpSbSDYk0k2"),
-    ("Rachel — calm",             "21m00Tcm4TlvDq8ikWAM"),
-    ("Adam — deep",               "pNInz6obpgDQGcFmaJgB"),
-    ("Domi — strong",             "AZnzlk1XvdvUeBnXmlld"),
-    ("Josh — young, deep",        "TxGEqnHWrfWFTfGW9XjX"),
-    ("Sam — raspy",               "yoZ06aMxZJJ28mfd3POQ"),
+    ("Lily — British, raspy",      "pFZP5JQG7iQjIQuC4Bku"),
+    ("Alice — British, confident", "Xb7hH8MSUJpSbSDYk0k2"),
+    ("Rachel — calm",              "21m00Tcm4TlvDq8ikWAM"),
+    ("Adam — deep",                "pNInz6obpgDQGcFmaJgB"),
+    ("Domi — strong",              "AZnzlk1XvdvUeBnXmlld"),
+    ("Josh — young, deep",         "TxGEqnHWrfWFTfGW9XjX"),
+    ("Sam — raspy",                "yoZ06aMxZJJ28mfd3POQ"),
 ]
 
 // Kokoro voices (curated English subset)
@@ -126,10 +180,11 @@ private let knownModels: [(name: String, id: String)] = [
     ("Multilingual v2 — 29 langs","eleven_multilingual_v2"),
 ]
 
-// ElevenLabs API accepts speed in [0.7, 1.2]
-private let elSpeedSteps: [(label: String, value: Double)] = [
-    ("0.7×", 0.7), ("0.85×", 0.85), ("1×", 1.0), ("1.1×", 1.1), ("1.2×", 1.2),
-]
+// ElevenLabs synthesis accepts up to 1.2×. Faster effective speeds use the
+// pitch-preserving AVAudioUnitTimePitch stage in just-aloud-audio.
+private let minEffectiveSpeed = 0.7
+private let maxEffectiveSpeed = 3.0
+private let speedStep = 0.05
 
 // Kokoro accepts a wider speed range
 private let localSpeedSteps: [(label: String, value: Double)] = [
@@ -232,41 +287,102 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 
 // MARK: - App delegate
 
-@objc final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+private final class VoiceActionButton: NSButton {
+    var voiceId = ""
+}
+
+@objc final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var config         = Config.load()
     private var accessTimer: Timer?
     private var animTimer:   Timer?
     private var animPhase:   Double = 0
+    private var indicatorMode = "idle"
+    private var playbackMonitorTimer: Timer?
 
     // Respeak state — synchronized via speakLock
     private var speakGeneration = 0
     private var currentSpeakProcess: Process?
     private var isSpeakingFlag = false
+    private var isPlaybackPaused = false
+    private weak var playPauseButton: NSButton?
+    private var playbackButtons: [NSButton] = []
     private var respeakTimer: Timer?
     private let speakLock = NSLock()
 
     // Credits cache (fetched from ElevenLabs API)
     private var cachedCredits: (used: Int, limit: Int, fetchedAt: Date)?
+    private var voiceNameFetchesInFlight = Set<String>()
+    private var voiceNameFetchFailures = Set<String>()
+    private var cloudVoiceIndicators: [String: NSImageView] = [:]
+    private var cloudVoiceSelectionButtons: [VoiceActionButton] = []
+    private var aboutWindow: NSWindow?
 
     // TTS daemon process (managed mode — started by this app)
     private var ttsDaemonProcess: Process?
 
+    private func idleMenuBarImage() -> NSImage {
+        if let path = Bundle.main.path(forResource: "menu-bar-template", ofType: "svg"),
+           let image = NSImage(contentsOfFile: path) {
+            image.isTemplate = true
+            image.accessibilityDescription = "Just Aloud"
+            return image
+        }
+        return NSImage(systemSymbolName: "waveform", accessibilityDescription: "Just Aloud") ?? NSImage()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "waveform", accessibilityDescription: "Speak11")
+        if ProcessInfo.processInfo.environment["JUST_ALOUD_UI_APPEARANCE"] == "light" {
+            NSApp.appearance = NSAppearance(named: .aqua)
+        } else if ProcessInfo.processInfo.environment["JUST_ALOUD_UI_APPEARANCE"] == "dark" {
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem.button?.image = idleMenuBarImage()
         appDelegateRef = self
+        installStandardEditMenu()
         installHotkey()
+        refreshVoiceNames(force: true)
         rebuildMenu()
-        if !AXIsProcessTrusted() {
+        if ProcessInfo.processInfo.environment["JUST_ALOUD_SKIP_ACCESSIBILITY_PROMPT"] != "1",
+           !AXIsProcessTrusted() {
             requestAccessibility()
         }
         updateTTSDaemon()
         fetchCredits()
+        let monitor = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in
+            self?.refreshPlaybackIndicator()
+        }
+        playbackMonitorTimer = monitor
+        RunLoop.main.add(monitor, forMode: .common)
+        refreshPlaybackIndicator()
+    }
+
+    private func installStandardEditMenu() {
+        let mainMenu = NSMenu()
+        let editRoot = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: "Edit")
+        let undo = NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        undo.target = nil
+        editMenu.addItem(undo)
+        editMenu.addItem(.separator())
+        for (title, action, key) in [
+            ("Cut", #selector(NSText.cut(_:)), "x"),
+            ("Copy", #selector(NSText.copy(_:)), "c"),
+            ("Paste", #selector(NSText.paste(_:)), "v"),
+            ("Select All", #selector(NSText.selectAll(_:)), "a")
+        ] {
+            let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            menuItem.target = nil
+            editMenu.addItem(menuItem)
+        }
+        editRoot.submenu = editMenu
+        mainMenu.addItem(editRoot)
+        NSApp.mainMenu = mainMenu
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        playbackMonitorTimer?.invalidate()
         killCurrentProcess()
         stopTTSDaemon()
     }
@@ -282,16 +398,27 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             rebuildMenu()
             updateTTSDaemon()
         }
+        updateMediaControls()
+        refreshVoiceNames()
         fetchCredits()
     }
 
     func setSpeaking(_ active: Bool) {
+        let requestedMode = active ? (isPlaybackPaused ? "paused" : "playing") : "idle"
+        guard requestedMode != indicatorMode else {
+            updateMediaControls()
+            return
+        }
+        indicatorMode = requestedMode
         // Always stop any existing animation first (prevents leaked timers
         // when the hotkey fires while a previous speak.sh is still running).
         animTimer?.invalidate()
         animTimer = nil
 
-        if active {
+        if active && isPlaybackPaused {
+            statusItem.button?.image = NSImage(
+                systemSymbolName: "pause.fill", accessibilityDescription: "Just Aloud paused")
+        } else if active {
             animPhase = 0
             statusItem.button?.image = waveformFrame(phase: 0)
             animTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -300,8 +427,29 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
                 self.statusItem.button?.image = self.waveformFrame(phase: self.animPhase)
             }
         } else {
-            statusItem.button?.image = NSImage(
-                systemSymbolName: "waveform", accessibilityDescription: "Speak11")
+            isPlaybackPaused = false
+            statusItem.button?.image = idleMenuBarImage()
+        }
+        updateMediaControls()
+    }
+
+    private func refreshPlaybackIndicator() {
+        guard isSpeechActive,
+              let rawState = try? String(contentsOfFile: playbackStatePath, encoding: .utf8) else {
+            isPlaybackPaused = false
+            setSpeaking(false)
+            return
+        }
+        switch rawState.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "playing":
+            isPlaybackPaused = false
+            setSpeaking(true)
+        case "paused":
+            isPlaybackPaused = true
+            setSpeaking(true)
+        default:
+            isPlaybackPaused = false
+            setSpeaking(false)
         }
     }
 
@@ -418,14 +566,12 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         isSpeakingFlag = true
         speakLock.unlock()
 
-        DispatchQueue.main.async { self.setSpeaking(true) }
-
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/bin/bash")
             task.arguments    = [speakPath]
             task.environment  = ProcessInfo.processInfo.environment.merging(
-                ["SPEAK11_MUTE_CHECKED": "1"]) { _, new in new }
+                ["JUST_ALOUD_MUTE_CHECKED": "1"]) { _, new in new }
 
             if let text = text {
                 let pipe = Pipe()
@@ -499,12 +645,12 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 
     private var venvPythonPath: String {
         (NSHomeDirectory() as NSString)
-            .appendingPathComponent(".local/share/speak11/venv/bin/python3")
+            .appendingPathComponent(".local/share/just-aloud/venv/bin/python3")
     }
 
     private var ttsServerPath: String {
         ((speakPath as NSString).deletingLastPathComponent as NSString)
-            .appendingPathComponent("tts_server.py")
+            .appendingPathComponent("just-aloud-tts-server.py")
     }
 
     private func startTTSDaemon() {
@@ -550,17 +696,120 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     }
 
     private func stopSpeaking() {
+        try? FileManager.default.removeItem(atPath: audioControlPath)
         killCurrentProcess()
+        terminateExternalSpeech()
         speakLock.lock()
         isSpeakingFlag = false
         speakLock.unlock()
         DispatchQueue.main.async { self.setSpeaking(false) }
     }
 
+    private func sendAudioControl(_ command: String) {
+        try? (command + "\n").write(
+            toFile: audioControlPath, atomically: true, encoding: .utf8)
+    }
+
+    @objc private func togglePlaybackPause() {
+        guard isSpeechActive else { return }
+        isPlaybackPaused.toggle()
+        sendAudioControl(isPlaybackPaused ? "pause" : "play")
+        setSpeaking(true)
+    }
+
+    @objc private func seekBackward() { sendAudioControl("seek:-10") }
+    @objc private func seekForward()  { sendAudioControl("seek:10") }
+    @objc private func stopPlayback() { stopSpeaking() }
+
+    private var isSpeechActive: Bool {
+        speakLock.lock()
+        let managed = isSpeakingFlag
+        speakLock.unlock()
+        if managed { return true }
+        guard let rawPID = try? String(contentsOfFile: speechPIDPath, encoding: .utf8),
+              let pid = Int32(rawPID.trimmingCharacters(in: .whitespacesAndNewlines)),
+              pid > 1 else { return false }
+        return Darwin.kill(pid, 0) == 0
+    }
+
+    private func terminateExternalSpeech() {
+        guard let rawPID = try? String(contentsOfFile: speechPIDPath, encoding: .utf8),
+              let pid = Int32(rawPID.trimmingCharacters(in: .whitespacesAndNewlines)),
+              pid > 1 else { return }
+        let ps = Process()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-p", String(pid), "-o", "command="]
+        let output = Pipe()
+        ps.standardOutput = output
+        ps.standardError = FileHandle.nullDevice
+        do { try ps.run() } catch { return }
+        ps.waitUntilExit()
+        let command = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard command.contains("just-aloud") else { return }
+        let pkill = Process()
+        pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        pkill.arguments = ["-P", String(pid)]
+        try? pkill.run()
+        pkill.waitUntilExit()
+        Darwin.kill(pid, SIGTERM)
+    }
+
+    private func mediaButton(symbol: String, pointSize: CGFloat, label: String, action: Selector) -> NSButton {
+        let configuration = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(configuration) ?? NSImage()
+        let button = NSButton(image: image, target: self, action: action)
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 36),
+            button.heightAnchor.constraint(equalToConstant: 36)
+        ])
+        return button
+    }
+
+    private func buildMediaControlsItem() -> NSMenuItem {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 252, height: 52))
+        let back = mediaButton(symbol: "gobackward.10", pointSize: 18, label: "Back 10 seconds", action: #selector(seekBackward))
+        let playPause = mediaButton(symbol: isPlaybackPaused ? "play.circle.fill" : "pause.circle.fill", pointSize: 25, label: isPlaybackPaused ? "Resume" : "Pause", action: #selector(togglePlaybackPause))
+        let forward = mediaButton(symbol: "goforward.10", pointSize: 18, label: "Forward 10 seconds", action: #selector(seekForward))
+        let stop = mediaButton(symbol: "stop.fill", pointSize: 15, label: "Stop", action: #selector(stopPlayback))
+        playPauseButton = playPause
+        playbackButtons = [back, playPause, forward, stop]
+        let stack = NSStackView(views: playbackButtons)
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor)
+        ])
+        let menuItem = NSMenuItem()
+        menuItem.view = container
+        updateMediaControls()
+        return menuItem
+    }
+
+    private func updateMediaControls() {
+        playbackButtons.forEach { $0.isEnabled = isSpeechActive }
+        let symbol = isPlaybackPaused ? "play.circle.fill" : "pause.circle.fill"
+        let label = isPlaybackPaused ? "Resume" : "Pause"
+        let configuration = NSImage.SymbolConfiguration(pointSize: 25, weight: .medium)
+        playPauseButton?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(configuration)
+        playPauseButton?.toolTip = label
+        playPauseButton?.setAccessibilityLabel(label)
+    }
+
     func calculateRemainingText() -> String? {
         let tmpDir = NSTemporaryDirectory()
-        let textPath = (tmpDir as NSString).appendingPathComponent("speak11_text")
-        let statusPath = (tmpDir as NSString).appendingPathComponent("speak11_status")
+        let textPath = (tmpDir as NSString).appendingPathComponent("just_aloud_text")
+        let statusPath = (tmpDir as NSString).appendingPathComponent("just_aloud_status")
 
         guard let text = try? String(contentsOfFile: textPath, encoding: .utf8),
               !text.isEmpty else {
@@ -661,38 +910,52 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     // MARK: - Keychain helpers
 
     private func readAPIKey() -> String? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        task.arguments = ["find-generic-password", "-a", "speak11", "-s", "speak11-api-key", "-w"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
-        do { try task.run() } catch { return nil }
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let data = keychainData(account: "just-aloud", service: "just-aloud-api-key") else {
+            return nil
+        }
         let key = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (key?.isEmpty ?? true) ? nil : key
     }
 
     private func saveAPIKey(_ key: String) {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        task.arguments = ["add-generic-password", "-a", "speak11", "-s", "speak11-api-key", "-w", key, "-U"]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        try? task.run()
-        task.waitUntilExit()
+        saveKeychainData(Data(key.utf8), account: "just-aloud", service: "just-aloud-api-key")
     }
 
     private func deleteAPIKey() {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        task.arguments = ["delete-generic-password", "-a", "speak11", "-s", "speak11-api-key"]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        try? task.run()
-        task.waitUntilExit()
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: "just-aloud",
+            kSecAttrService as String: "just-aloud-api-key",
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    private func keychainData(account: String, service: String) -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecAttrService as String: service,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
+        return item as? Data
+    }
+
+    private func saveKeychainData(_ data: Data, account: String, service: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecAttrService as String: service,
+        ]
+        let update = [kSecValueData as String: data]
+        if SecItemUpdate(query as CFDictionary, update as CFDictionary) == errSecItemNotFound {
+            var item = query
+            item[kSecValueData as String] = data
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            SecItemAdd(item as CFDictionary, nil)
+        }
     }
 
     // MARK: - Menu
@@ -700,6 +963,9 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     private func rebuildMenu() {
         let menu = NSMenu()
         menu.delegate = self
+
+        menu.addItem(buildMediaControlsItem())
+        menu.addItem(.separator())
 
         // Backend submenu — always visible so users can discover and switch
         menu.addItem(submenuItem("Backend", items: buildBackendItems()))
@@ -714,7 +980,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         if showEl {
             if showHeaders { menu.addItem(hintItem("ElevenLabs")) }
             menu.addItem(submenuItem("Voice", items: buildVoiceItems()))
-            menu.addItem(submenuItem("Speed", items: buildElSpeedItems()))
+            menu.addItem(buildElSpeedSliderItem())
             menu.addItem(submenuItem("Model", items: buildModelItems()))
             menu.addItem(submenuItem("Stability", items: buildStabilityItems()))
             menu.addItem(submenuItem("Similarity", items: buildSimilarityItems()))
@@ -775,7 +1041,13 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
             menu.addItem(.separator())
         }
 
-        let quit = NSMenuItem(title: "Quit",
+        let about = NSMenuItem(title: "About Just Aloud",
+                               action: #selector(showAbout),
+                               keyEquivalent: "")
+        about.target = self
+        menu.addItem(about)
+
+        let quit = NSMenuItem(title: "Quit Just Aloud",
                               action: #selector(NSApplication.terminate(_:)),
                               keyEquivalent: "q")
         menu.addItem(quit)
@@ -796,19 +1068,130 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
     }
 
     private func buildVoiceItems() -> [NSMenuItem] {
-        let isCustom = !knownVoices.contains { $0.id == config.voiceId }
-        var items = knownVoices.map { v in
-            item(v.name, #selector(pickVoice(_:)), repr: v.id, on: v.id == config.voiceId)
+        cloudVoiceIndicators.removeAll()
+        cloudVoiceSelectionButtons.removeAll()
+        var items = knownVoices.map { voice in
+            defaultVoiceItem(id: voice.id, name: voice.name, on: voice.id == config.voiceId)
         }
+        items.append(contentsOf: config.customVoiceIds.map { id in
+            customVoiceItem(id: id, name: config.customVoiceNames[id], on: id == config.voiceId)
+        })
         items.append(.separator())
-        let customLabel = isCustom ? "Custom: \(config.voiceId)" : "Custom voice ID…"
-        items.append(item(customLabel, #selector(customVoice), repr: "", on: isCustom))
+        items.append(item("Add Custom Voice ID…", #selector(customVoice), repr: "", on: false))
         return items
+    }
+
+    private func defaultVoiceItem(id: String, name: String, on: Bool) -> NSMenuItem {
+        let menuItem = NSMenuItem()
+        let row = NSView(frame: NSRect(x: 0, y: 0, width: 344, height: 28))
+
+        let indicator = NSImageView(frame: NSRect(x: 16, y: 7, width: 14, height: 14))
+        indicator.image = voiceRadioImage(active: on)
+        indicator.contentTintColor = on ? .controlAccentColor : .tertiaryLabelColor
+        indicator.imageScaling = .scaleProportionallyDown
+        row.addSubview(indicator)
+        cloudVoiceIndicators[id] = indicator
+
+        let nameLabel = NSTextField(labelWithString: name)
+        nameLabel.frame = NSRect(x: 38, y: 5, width: 286, height: 18)
+        nameLabel.font = NSFont.menuFont(ofSize: 13)
+        nameLabel.textColor = .labelColor
+        nameLabel.lineBreakMode = .byTruncatingTail
+        row.addSubview(nameLabel)
+
+        let selectButton = VoiceActionButton(frame: NSRect(x: 10, y: 0, width: 324, height: 28))
+        selectButton.voiceId = id
+        selectButton.target = self
+        selectButton.action = #selector(pickCloudVoice(_:))
+        selectButton.isBordered = false
+        selectButton.title = ""
+        selectButton.toolTip = "Use \(name)"
+        selectButton.setAccessibilityLabel("\(on ? "Active" : "Inactive") voice \(name)")
+        row.addSubview(selectButton)
+        cloudVoiceSelectionButtons.append(selectButton)
+
+        menuItem.view = row
+        return menuItem
+    }
+
+    private func customVoiceItem(id: String, name: String?, on: Bool) -> NSMenuItem {
+        let menuItem = NSMenuItem()
+        let row = NSView(frame: NSRect(x: 0, y: 0, width: 344, height: 44))
+
+        let displayName: String
+        if let name, !name.isEmpty {
+            displayName = name
+        } else if voiceNameFetchesInFlight.contains(id) {
+            displayName = "Fetching voice name…"
+        } else {
+            displayName = "Voice name unavailable"
+        }
+        let indicator = NSImageView(frame: NSRect(x: 16, y: 25, width: 14, height: 14))
+        indicator.image = voiceRadioImage(active: on)
+        indicator.contentTintColor = on ? .controlAccentColor : .tertiaryLabelColor
+        indicator.imageScaling = .scaleProportionallyDown
+        row.addSubview(indicator)
+        cloudVoiceIndicators[id] = indicator
+
+        let nameLabel = NSTextField(labelWithString: displayName)
+        nameLabel.frame = NSRect(x: 38, y: 23, width: 250, height: 18)
+        nameLabel.font = NSFont.menuFont(ofSize: 13)
+        nameLabel.textColor = .labelColor
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.toolTip = displayName
+        row.addSubview(nameLabel)
+
+        let selectButton = VoiceActionButton(frame: NSRect(x: 10, y: 20, width: 282, height: 23))
+        selectButton.voiceId = id
+        selectButton.target = self
+        selectButton.action = #selector(pickCloudVoice(_:))
+        selectButton.isBordered = false
+        selectButton.title = ""
+        selectButton.toolTip = "Use \(displayName)"
+        selectButton.setAccessibilityLabel(
+            "\(on ? "Active" : "Inactive") voice \(displayName), ID \(id)")
+        row.addSubview(selectButton)
+        cloudVoiceSelectionButtons.append(selectButton)
+
+        let copyButton = VoiceActionButton(frame: NSRect(x: 38, y: 4, width: 250, height: 18))
+        copyButton.voiceId = id
+        copyButton.target = self
+        copyButton.action = #selector(copyCustomVoiceID(_:))
+        copyButton.isBordered = false
+        copyButton.alignment = .left
+        copyButton.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        copyButton.contentTintColor = .secondaryLabelColor
+        copyButton.title = id
+        copyButton.image = NSImage(
+            systemSymbolName: "doc.on.doc",
+            accessibilityDescription: "Copy voice ID")
+        copyButton.imagePosition = .imageLeading
+        copyButton.toolTip = "Copy voice ID"
+        copyButton.setAccessibilityLabel("Copy voice ID \(id)")
+        row.addSubview(copyButton)
+
+        let removeButton = VoiceActionButton(frame: NSRect(x: 308, y: 10, width: 20, height: 24))
+        removeButton.voiceId = id
+        removeButton.target = self
+        removeButton.action = #selector(removeCustomVoice(_:))
+        removeButton.isBordered = false
+        removeButton.image = NSImage(
+            systemSymbolName: "xmark.circle.fill",
+            accessibilityDescription: "Remove custom voice")
+        removeButton.imagePosition = .imageOnly
+        removeButton.contentTintColor = .tertiaryLabelColor
+        removeButton.toolTip = "Remove \(displayName)"
+        removeButton.setAccessibilityLabel("Remove voice \(displayName)")
+        row.addSubview(removeButton)
+
+        menuItem.view = row
+        return menuItem
     }
 
     private func buildLocalVoiceItems() -> [NSMenuItem] {
         kokoroVoices.map { v in
-            item(v.name, #selector(pickLocalVoice(_:)), repr: v.id, on: v.id == config.localVoice)
+            voiceChoiceItem(v.name, #selector(pickLocalVoice(_:)),
+                            repr: v.id, on: v.id == config.localVoice)
         }
     }
 
@@ -818,11 +1201,51 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         }
     }
 
-    private func buildElSpeedItems() -> [NSMenuItem] {
-        elSpeedSteps.map { s in
-            item(s.label, #selector(pickSpeed(_:)),
-                 repr: String(s.value), on: abs(s.value - config.speed) < 0.01)
-        }
+    private func buildElSpeedSliderItem() -> NSMenuItem {
+        let menuItem = NSMenuItem()
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 66))
+        let effectiveSpeed = min(max(config.speed * config.playbackSpeed,
+                                     minEffectiveSpeed), maxEffectiveSpeed)
+
+        let valueLabel = NSTextField(labelWithString:
+            "Speed  \(String(format: "%.2f", effectiveSpeed))×")
+        valueLabel.frame = NSRect(x: 18, y: 40, width: 150, height: 18)
+        valueLabel.font = NSFont.menuFont(ofSize: 13)
+        valueLabel.tag = 4101
+        view.addSubview(valueLabel)
+
+        let reset = NSButton(title: "Reset", target: self, action: #selector(resetSpeed(_:)))
+        reset.frame = NSRect(x: 214, y: 36, width: 54, height: 24)
+        reset.bezelStyle = .inline
+        reset.font = NSFont.menuFont(ofSize: 11)
+        view.addSubview(reset)
+
+        let slider = NSSlider(value: effectiveSpeed,
+                              minValue: minEffectiveSpeed,
+                              maxValue: maxEffectiveSpeed,
+                              target: self,
+                              action: #selector(speedSliderChanged(_:)))
+        slider.frame = NSRect(x: 40, y: 12, width: 198, height: 22)
+        slider.isContinuous = true
+        slider.altIncrementValue = speedStep
+        slider.setAccessibilityLabel("Just Aloud playback speed")
+        slider.setAccessibilityValueDescription(String(format: "%.2f times", effectiveSpeed))
+        view.addSubview(slider)
+
+        let slow = NSTextField(labelWithString: "0.7×")
+        slow.frame = NSRect(x: 9, y: 14, width: 34, height: 16)
+        slow.font = NSFont.menuFont(ofSize: 10)
+        slow.textColor = .secondaryLabelColor
+        view.addSubview(slow)
+
+        let fast = NSTextField(labelWithString: "3×")
+        fast.frame = NSRect(x: 242, y: 14, width: 28, height: 16)
+        fast.font = NSFont.menuFont(ofSize: 10)
+        fast.textColor = .secondaryLabelColor
+        view.addSubview(fast)
+
+        menuItem.view = view
+        return menuItem
     }
 
     private func buildLocalSpeedItems() -> [NSMenuItem] {
@@ -876,6 +1299,24 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         return i
     }
 
+    private func voiceChoiceItem(_ title: String, _ action: Selector,
+                                 repr: String, on: Bool) -> NSMenuItem {
+        let i = item(title, action, repr: repr, on: on)
+        i.onStateImage = voiceRadioImage(active: true)
+        i.offStateImage = voiceRadioImage(active: false)
+        return i
+    }
+
+    private func voiceRadioImage(active: Bool) -> NSImage? {
+        let size = NSImage.SymbolConfiguration(pointSize: 9, weight: .medium)
+        let color = NSImage.SymbolConfiguration(
+            paletteColors: [active ? .controlAccentColor : .tertiaryLabelColor])
+        return NSImage(
+            systemSymbolName: active ? "circle.inset.filled" : "circle",
+            accessibilityDescription: active ? "Active" : "Inactive")?
+            .withSymbolConfiguration(size.applying(color))
+    }
+
     private func submenuItem(_ title: String, items: [NSMenuItem]) -> NSMenuItem {
         let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let sub = NSMenu()
@@ -902,7 +1343,7 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 
     private var installLocalPath: String {
         ((speakPath as NSString).deletingLastPathComponent as NSString)
-            .appendingPathComponent("install-local.sh")
+            .appendingPathComponent("just-aloud-install-local")
     }
 
     /// Show "Install Local TTS" dialog. Returns true if user clicked Install.
@@ -1042,12 +1483,44 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         updateTTSDaemon()
     }
 
-    @objc private func pickVoice(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        config.voiceId = id
+    @objc private func pickCloudVoice(_ sender: VoiceActionButton) {
+        guard !sender.voiceId.isEmpty else { return }
+        config.voiceId = sender.voiceId
         config.save()
-        rebuildMenu()
+        updateCloudVoiceSelectionIndicators()
         scheduleRespeak()
+    }
+
+    private func updateCloudVoiceSelectionIndicators() {
+        for (id, indicator) in cloudVoiceIndicators {
+            let active = id == config.voiceId
+            indicator.image = voiceRadioImage(active: active)
+            indicator.contentTintColor = active ? .controlAccentColor : .tertiaryLabelColor
+        }
+        for button in cloudVoiceSelectionButtons {
+            let active = button.voiceId == config.voiceId
+            button.setAccessibilityLabel(
+                "\(active ? "Active" : "Inactive") voice, ID \(button.voiceId)")
+        }
+    }
+
+    @objc private func copyCustomVoiceID(_ sender: VoiceActionButton) {
+        guard !sender.voiceId.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(sender.voiceId, forType: .string)
+
+        sender.title = "Copied"
+        sender.image = NSImage(
+            systemSymbolName: "checkmark",
+            accessibilityDescription: "Copied")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak sender] in
+            guard let sender else { return }
+            sender.title = sender.voiceId
+            sender.image = NSImage(
+                systemSymbolName: "doc.on.doc",
+                accessibilityDescription: "Copy voice ID")
+        }
     }
 
     @objc private func pickLocalVoice(_ sender: NSMenuItem) {
@@ -1063,22 +1536,50 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         defer { NSApp.setActivationPolicy(.accessory) }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Custom Voice ID"
-        alert.informativeText = "Enter a voice ID from elevenlabs.io/voice-library"
-        alert.addButton(withTitle: "Save")
+        alert.messageText = "Add Custom Voice ID"
+        alert.informativeText = "Enter a voice ID from elevenlabs.io/voice-library. Saved voices remain available in the Voice menu."
+        alert.addButton(withTitle: "Add")
         alert.addButton(withTitle: "Cancel")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 22))
-        field.stringValue = config.voiceId
-        field.placeholderString = "e.g. pFZP5JQG7iQjIQuC4Bku"
+        field.isEditable = true
+        field.isSelectable = true
+        field.stringValue = ""
+        field.placeholderString = "Paste your ElevenLabs voice ID"
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let val = field.stringValue.trimmingCharacters(in: .whitespaces)
+        let val = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !val.isEmpty else { return }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
+        guard val.unicodeScalars.allSatisfy({ allowed.contains($0) }) else {
+            let error = NSAlert()
+            error.messageText = "Invalid Voice ID"
+            error.informativeText = "Voice IDs may contain only letters, numbers, hyphens, and underscores."
+            error.alertStyle = .warning
+            error.runModal()
+            return
+        }
+        if !config.customVoiceIds.contains(val) { config.customVoiceIds.append(val) }
         config.voiceId = val
         config.save()
+        voiceNameFetchFailures.remove(val)
+        refreshVoiceNames()
         rebuildMenu()
         scheduleRespeak()
+    }
+
+    @objc private func removeCustomVoice(_ sender: VoiceActionButton) {
+        let id = sender.voiceId
+        guard !id.isEmpty else { return }
+        statusItem.menu?.cancelTracking()
+        let wasActive = config.voiceId == id
+        config.customVoiceIds.removeAll { $0 == id }
+        config.customVoiceNames.removeValue(forKey: id)
+        voiceNameFetchFailures.remove(id)
+        if wasActive { config.voiceId = knownVoices.first?.id ?? "" }
+        config.save()
+        rebuildMenu()
+        if wasActive && !config.voiceId.isEmpty { scheduleRespeak() }
     }
 
     @objc private func pickModel(_ sender: NSMenuItem) {
@@ -1089,13 +1590,33 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         scheduleRespeak()
     }
 
-    @objc private func pickSpeed(_ sender: NSMenuItem) {
-        guard let str = sender.representedObject as? String,
-              let val = Double(str) else { return }
-        config.speed = val
+    private func setEffectiveSpeed(_ rawValue: Double) {
+        let bounded = min(max(rawValue, minEffectiveSpeed), maxEffectiveSpeed)
+        let value = (bounded / speedStep).rounded() * speedStep
+        config.speed = min(value, 1.2)
+        config.playbackSpeed = value / config.speed
         config.save()
-        rebuildMenu()
-        scheduleRespeak()
+    }
+
+    @objc private func speedSliderChanged(_ sender: NSSlider) {
+        setEffectiveSpeed(sender.doubleValue)
+        let effectiveSpeed = config.speed * config.playbackSpeed
+        sender.doubleValue = effectiveSpeed
+        sender.setAccessibilityValueDescription(String(format: "%.2f times", effectiveSpeed))
+        if let label = sender.superview?.viewWithTag(4101) as? NSTextField {
+            label.stringValue = "Speed  \(String(format: "%.2f", effectiveSpeed))×"
+        }
+    }
+
+    @objc private func resetSpeed(_ sender: NSButton) {
+        setEffectiveSpeed(1.0)
+        guard let view = sender.superview,
+              let slider = view.subviews.compactMap({ $0 as? NSSlider }).first else { return }
+        slider.doubleValue = 1.0
+        slider.setAccessibilityValueDescription("1.00 times")
+        if let label = view.viewWithTag(4101) as? NSTextField {
+            label.stringValue = "Speed  1.00×"
+        }
     }
 
     @objc private func pickLocalSpeed(_ sender: NSMenuItem) {
@@ -1164,6 +1685,55 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         scheduleRespeak()
     }
 
+    // MARK: - ElevenLabs voice names
+
+    private func refreshVoiceNames(force: Bool = false) {
+        guard let key = readAPIKey(), !key.isEmpty else { return }
+        for id in config.customVoiceIds {
+            guard !voiceNameFetchesInFlight.contains(id),
+                  force || config.customVoiceNames[id] == nil else { continue }
+            voiceNameFetchesInFlight.insert(id)
+            voiceNameFetchFailures.remove(id)
+            fetchVoiceName(id: id, apiKey: key)
+        }
+    }
+
+    private func fetchVoiceName(id: String, apiKey: String) {
+        guard let url = URL(string: "https://api.elevenlabs.io/v1/voices/\(id)") else {
+            voiceNameFetchesInFlight.remove(id)
+            voiceNameFetchFailures.insert(id)
+            return
+        }
+        var request = URLRequest(url: url)
+        request.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
+        request.timeoutInterval = 10
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            let name: String? = {
+                guard let data, error == nil,
+                      let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let value = json["name"] as? String else { return nil }
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }()
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.voiceNameFetchesInFlight.remove(id)
+                guard self.config.customVoiceIds.contains(id) else { return }
+                if let name {
+                    self.config.customVoiceNames[id] = name
+                    self.voiceNameFetchFailures.remove(id)
+                    self.config.save()
+                } else {
+                    self.voiceNameFetchFailures.insert(id)
+                }
+                self.rebuildMenu()
+            }
+        }.resume()
+    }
+
     // MARK: - Credits Display
 
     private func fetchCredits() {
@@ -1205,6 +1775,195 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
         let lStr = fmt.string(from: NSNumber(value: limit)) ?? "\(limit)"
         creditsItem.title = "Credits: \(rStr) / \(lStr)"
         creditsItem.isHidden = false
+    }
+
+    // MARK: - About and safe migration
+
+    private var versionString: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "local"
+        return "Version \(version) (\(build))"
+    }
+
+    @objc private func showAbout() {
+        if let aboutWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            aboutWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        NSApp.setActivationPolicy(.regular)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false)
+        window.title = "About Just Aloud"
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView = content
+
+        let icon = NSImageView(image: NSApp.applicationIconImage)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageScaling = .scaleProportionallyUpOrDown
+
+        let title = NSTextField(labelWithString: "Just Aloud")
+        title.font = .systemFont(ofSize: 24, weight: .semibold)
+        title.alignment = .center
+
+        let version = NSTextField(labelWithString: versionString)
+        version.textColor = .secondaryLabelColor
+        version.alignment = .center
+
+        let creator = NSTextField(wrappingLabelWithString:
+            "Created and maintained by Kian Konrad Tajbakhsh.\n\n" +
+            "Based on Speak11, originally created by Stefano Martiniani.\n\n" +
+            "Just Aloud is an independent, unofficial derivative and is not affiliated with or endorsed by the original Speak11 project or ElevenLabs.")
+        creator.alignment = .center
+        creator.maximumNumberOfLines = 0
+
+        let source = NSButton(title: "Source Repository", target: self, action: #selector(openSourceRepository))
+        let license = NSButton(title: "Software License", target: self, action: #selector(openSoftwareLicense))
+        let attribution = NSButton(title: "Attribution", target: self, action: #selector(openAttribution))
+        let thirdParty = NSButton(title: "Third-Party Licenses", target: self, action: #selector(openThirdPartyLicenses))
+        let copyVersion = NSButton(title: "Copy Version Information", target: self, action: #selector(copyVersionInformation))
+        let migrate = NSButton(title: "Migrate from Speak11…", target: self, action: #selector(migrateFromSpeak11))
+        for button in [source, license, attribution, thirdParty, copyVersion, migrate] {
+            button.bezelStyle = .rounded
+        }
+
+        let linkRow = NSStackView(views: [source, license, attribution, thirdParty])
+        linkRow.orientation = .horizontal
+        linkRow.spacing = 8
+        linkRow.distribution = .fillEqually
+
+        let actionRow = NSStackView(views: [copyVersion, migrate])
+        actionRow.orientation = .horizontal
+        actionRow.spacing = 8
+        actionRow.distribution = .fillEqually
+
+        let stack = NSStackView(views: [icon, title, version, creator, linkRow, actionRow])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            content.widthAnchor.constraint(equalToConstant: 520),
+            content.heightAnchor.constraint(equalToConstant: 520),
+            icon.widthAnchor.constraint(equalToConstant: 112),
+            icon.heightAnchor.constraint(equalToConstant: 112),
+            creator.widthAnchor.constraint(equalToConstant: 450),
+            linkRow.widthAnchor.constraint(equalToConstant: 470),
+            actionRow.widthAnchor.constraint(equalToConstant: 360),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -20),
+            stack.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+        ])
+
+        aboutWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func openSourceRepository() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/Kian-hdr/just-aloud")!)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if (notification.object as? NSWindow) === aboutWindow {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    private func openBundledDocument(_ name: String, extension ext: String? = "md", fallbackURL: String) {
+        if let path = Bundle.main.path(forResource: name, ofType: ext) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        } else if let url = URL(string: fallbackURL) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func openSoftwareLicense() {
+        openBundledDocument("LICENSE", extension: nil,
+                            fallbackURL: "https://github.com/Kian-hdr/just-aloud/blob/main/LICENSE")
+    }
+
+    @objc private func openAttribution() {
+        openBundledDocument("ATTRIBUTION", fallbackURL: "https://github.com/Kian-hdr/just-aloud/blob/main/ATTRIBUTION.md")
+    }
+
+    @objc private func openThirdPartyLicenses() {
+        openBundledDocument("THIRD_PARTY_NOTICES", fallbackURL: "https://github.com/Kian-hdr/just-aloud/blob/main/THIRD_PARTY_NOTICES.md")
+    }
+
+    @objc private func copyVersionInformation() {
+        let value = "Just Aloud \(versionString) • macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
+
+    @objc private func migrateFromSpeak11() {
+        struct MigrationSource {
+            let label: String
+            let configPath: String
+            let keychainAccount: String
+            let keychainService: String
+        }
+        let home = NSHomeDirectory() as NSString
+        let candidates = [
+            MigrationSource(
+                label: "Speak11 Enhanced",
+                configPath: home.appendingPathComponent(".config/speak11-enhanced/config"),
+                keychainAccount: "speak11-enhanced",
+                keychainService: "speak11-enhanced-api-key"),
+            MigrationSource(
+                label: "Speak11",
+                configPath: home.appendingPathComponent(".config/speak11/config"),
+                keychainAccount: "speak11",
+                keychainService: "speak11-api-key"),
+        ]
+        guard let source = candidates.first(where: {
+            FileManager.default.fileExists(atPath: $0.configPath) ||
+            keychainData(account: $0.keychainAccount, service: $0.keychainService) != nil
+        }) else {
+            let alert = NSAlert()
+            alert.messageText = "No Speak11 settings found"
+            alert.informativeText = "The original installation was not changed."
+            alert.runModal()
+            return
+        }
+
+        let confirmation = NSAlert()
+        confirmation.messageText = "Migrate from \(source.label)?"
+        confirmation.informativeText =
+            "This copies compatible settings and the ElevenLabs credential into Just Aloud. " +
+            "It does not reveal the key, modify the original Keychain item, or uninstall the original app."
+        confirmation.addButton(withTitle: "Migrate")
+        confirmation.addButton(withTitle: "Cancel")
+        guard confirmation.runModal() == .alertFirstButtonReturn else { return }
+
+        if FileManager.default.fileExists(atPath: source.configPath) {
+            config = Config.load(from: source.configPath)
+            config.save()
+        }
+        if let keyData = keychainData(account: source.keychainAccount, service: source.keychainService) {
+            saveKeychainData(keyData, account: "just-aloud", service: "just-aloud-api-key")
+        }
+        refreshVoiceNames(force: true)
+        rebuildMenu()
+        updateTTSDaemon()
+
+        let result = NSAlert()
+        result.messageText = "Migration complete"
+        result.informativeText = "Just Aloud now has a private copy. \(source.label) remains installed and unchanged."
+        result.runModal()
     }
 
     // MARK: - API Key Management
@@ -1328,6 +2087,17 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 }
 
 // MARK: - Entry point
+
+#if TESTING
+if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--inspect-config" {
+    let inspected = Config.load(from: CommandLine.arguments[2])
+    print("backend=\(inspected.ttsBackend)")
+    print("custom_voice_count=\(inspected.customVoiceIds.count)")
+    print("named_voice_count=\(inspected.customVoiceNames.count)")
+    print("has_active_voice=\(!inspected.voiceId.isEmpty)")
+    exit(0)
+}
+#endif
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)

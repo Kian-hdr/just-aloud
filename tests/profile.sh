@@ -1,8 +1,8 @@
 #!/bin/bash
-# ── Speak11 profiling utility ───────────────────────────────────────
+# ── Just Aloud profiling utility ───────────────────────────────────────
 # Usage: bash tests/profile.sh [--components] [text]
 #
-# Runs speak.sh end-to-end with high-resolution timestamps on every
+# Runs just-aloud.sh end-to-end with high-resolution timestamps on every
 # command (via bash -x + PS4), then extracts phase timings from the
 # trace. This is the same technique that found the O(n^2) bash
 # substitution bottleneck.
@@ -16,8 +16,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SPEAK_SH="$SCRIPT_DIR/speak.sh"
-DATA_DIR="$HOME/.local/share/speak11"
+SPEAK_SH="$SCRIPT_DIR/just-aloud.sh"
+DATA_DIR="$HOME/.local/share/just-aloud"
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -66,13 +66,13 @@ The coffee grew cold as she wrote. Page after page, the words came faster than s
 
 She would not send it. But she felt lighter. Dr. Smith was right. Sometimes the act of writing is enough.'
 
-printf "\n\033[1mSpeak11 Performance Profile\033[0m\n"
+printf "\n\033[1mJust Aloud Performance Profile\033[0m\n"
 printf "═══════════════════════════════════════════════════════════\n"
 printf "  Text: %d chars\n" "${#TEXT}"
 printf "═══════════════════════════════════════════════════════════\n\n"
 
 # ══════════════════════════════════════════════════════════════════════
-# END-TO-END: run speak.sh with bash -x and high-res PS4 timestamps
+# END-TO-END: run just-aloud.sh with bash -x and high-res PS4 timestamps
 # ══════════════════════════════════════════════════════════════════════
 
 printf "\033[1mEnd-to-end pipeline (bash -x trace)\033[0m\n"
@@ -94,13 +94,13 @@ chmod +x "$_STUBS/afinfo"
 
 _TRACE=$(mktemp)
 
-# Run speak.sh with -x tracing. PS4 prefixes each traced line with a
+# Run just-aloud.sh with -x tracing. PS4 prefixes each traced line with a
 # high-resolution timestamp. stdout (TTS model output) goes to /dev/null.
 # stderr gets the trace log.
 # Use a temp file for input to avoid pipe (which prevents stderr redirect).
 _INPUT=$(mktemp)
 printf '%s' "$TEXT" > "$_INPUT"
-TTS_BACKEND=local SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 PATH="$_STUBS:$PATH" \
+TTS_BACKEND=local JUST_ALOUD_MUTE_CHECKED=1 JUST_ALOUD_NO_QUEUE_PLAYER=1 PATH="$_STUBS:$PATH" \
     PS4='+$(/usr/bin/perl -MTime::HiRes=time -e "printf q{%.6f }, time") ' \
     bash -x "$SPEAK_SH" < "$_INPUT" >"$_TRACE.out" 2>"$_TRACE" || true
 rm -f "$_INPUT" "$_TRACE.out"
@@ -197,7 +197,7 @@ if $COMPONENTS; then
 
     # WAV duration
     printf "\n\033[1mWAV duration (10 calls)\033[0m\n"
-    _W=$(mktemp "${TMPDIR:-/tmp/}speak11_prof_XXXXXXXXXX.wav")
+    _W=$(mktemp "${TMPDIR:-/tmp/}just-aloud_prof_XXXXXXXXXX.wav")
     python3 -c "
 import struct,sys;sr=24000;ch=1;bps=16;n=sr*5;ds=n*ch*(bps//8)
 with open(sys.argv[1],'wb') as f:

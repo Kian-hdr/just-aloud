@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="play" x1="430" y1="386" x2="666" y2="638" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF655C"/>
+      <stop offset="1" stop-color="#FF9B68"/>
+    </linearGradient>
+  </defs>
+  <path d="M430 397C430 375 454 362 473 374L662 491C681 503 681 530 662 542L473 660C454 672 430 658 430 636Z" fill="url(#play)"/>
+</svg>

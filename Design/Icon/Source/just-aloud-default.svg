@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="arc" x1="244" y1="796" x2="758" y2="208" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#27247F"/><stop offset="1" stop-color="#376FD9"/></linearGradient>
+    <linearGradient id="play" x1="430" y1="386" x2="666" y2="638" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FF655C"/><stop offset="1" stop-color="#FF9B68"/></linearGradient>
+    <linearGradient id="waves" x1="682" y1="362" x2="816" y2="680" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#38BEC4"/><stop offset="1" stop-color="#6BD8CE"/></linearGradient>
+  </defs>
+  <path d="M736 744A330 330 0 1 1 740 278" fill="none" stroke="url(#arc)" stroke-width="112" stroke-linecap="round"/>
+  <path d="M394 711A216 216 0 0 1 350 628" fill="none" stroke="#302A96" stroke-width="72" stroke-linecap="round"/>
+  <path d="M430 397C430 375 454 362 473 374L662 491C681 503 681 530 662 542L473 660C454 672 430 658 430 636Z" fill="url(#play)"/>
+  <path d="M680 427C728 475 728 549 680 597" fill="none" stroke="url(#waves)" stroke-width="60" stroke-linecap="round"/>
+  <path d="M758 363C842 447 842 577 758 661" fill="none" stroke="url(#waves)" stroke-width="68" stroke-linecap="round"/>
+</svg>

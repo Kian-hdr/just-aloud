@@ -1,4 +1,4 @@
-# Speak11 -- Design Principles
+# Just Aloud: Design Principles
 
 This document defines the working principles that govern the implementation.
 Every change must be consistent with these rules.
@@ -6,19 +6,19 @@ Every change must be consistent with these rules.
 
 ## Architecture
 
-Speak11 has four components:
+Just Aloud has four components:
 
 | Component | Language | Role |
 |---|---|---|
-| `speak.sh` | Bash | TTS orchestrator. Reads text, splits into sentences, generates audio, plays it. |
-| `Speak11.swift` | Swift/AppKit | Menu bar app. Global hotkey, settings UI, config file, respeak. |
+| `just-aloud.sh` | Bash | TTS orchestrator. Reads text, splits into sentences, generates audio, plays it. |
+| `Just Aloud.swift` | Swift/AppKit | Menu bar app. Global hotkey, settings UI, config file, respeak. |
 | `tts_server.py` | Python | Persistent Kokoro daemon. Keeps the model in memory for instant response. |
 | `install.command` | Bash | Interactive installer. Dialogs, backend choice, CLT auto-update, Keychain, app compile. |
-| `speak11-audio.swift` | Swift | CoreAudio CLI. Sub-millisecond mute check and unmute for standalone use. |
+| `just-aloud-audio.swift` | Swift | CoreAudio CLI, audio queue, playback controls, and playback state. |
 
-Data flows one way: **Swift -> speak.sh -> tts_server.py**.
+Data flows one way: **Swift -> just-aloud.sh -> tts_server.py**.
 The Swift app checks mute state via CoreAudio in-process (microseconds), then
-launches speak.sh as a subprocess with `SPEAK11_MUTE_CHECKED=1`. speak.sh
+launches just-aloud.sh as a subprocess with `JUST_ALOUD_MUTE_CHECKED=1`. just-aloud.sh
 connects to the daemon over a Unix socket. There is no reverse communication
 except through shared files (TEXT_FILE, STATUS_FILE, config).
 
@@ -43,14 +43,14 @@ or `both`). Silent fallback only happens when `both` is installed.
 
     environment variable > config file > hardcoded default
 
-speak.sh saves env vars before sourcing the config to implement this:
+just-aloud.sh saves env vars before sourcing the config to implement this:
 ```
 _ENV_X="${X:-}"
 source "$_CONFIG"
 X="${_ENV_X:-${X:-default}}"
 ```
 
-Swift writes the config file. speak.sh reads it. Both parse the same format:
+Swift writes the config file. just-aloud.sh reads it. Both parse the same format:
 `KEY="value"` lines, comments starting with `#`.
 
 
@@ -110,7 +110,7 @@ The remaining sentences are never sent to the API or to Kokoro.
 
 ## Signal handling
 
-speak.sh uses three separate traps. This is mandatory for bash 3.2 correctness:
+just-aloud.sh uses three separate traps. This is mandatory for bash 3.2 correctness:
 
 ```bash
 trap cleanup EXIT
@@ -142,7 +142,7 @@ When SIGTERM arrives during `wait`, bash immediately runs the trap handler
 
 ## PID file toggle
 
-speak.sh uses a PID file (`speak11_tts.pid`) for toggle behavior:
+just-aloud.sh uses a PID file (`just_aloud_tts.pid`) for toggle behavior:
 
 1. On start: check if PID file exists and process is alive.
 2. If alive: **kill children first** (`pkill -P`), then kill parent, wait up to
@@ -165,7 +165,7 @@ respeaks from roughly the current position.
 
 ### Data flow
 
-1. speak.sh writes `TEXT_FILE` with the full original text.
+1. just-aloud.sh writes `TEXT_FILE` with the full original text.
 2. `play_audio` writes `STATUS_FILE` with four lines:
    ```
    epoch_seconds      (fractional, cached at startup then derived with bash SECONDS)
@@ -179,7 +179,7 @@ respeaks from roughly the current position.
    approxCharPos = charOffset + sentenceLen * ratio
    ```
 4. Swift finds the nearest sentence boundary at or after `approxCharPos`.
-5. Swift kills the current speak.sh, passes remaining text to a new one.
+5. Swift kills the current just-aloud.sh, passes remaining text to a new one.
 
 ### Fallback
 
@@ -220,7 +220,7 @@ step 4 -- a race where a second hotkey press could start overlapping audio.
 
 ### Invariant
 
-`isSpeakingFlag` is true if and only if there exists a running speak.sh process
+`isSpeakingFlag` is true if and only if there exists a running just-aloud.sh process
 that was started by the current generation.
 
 
@@ -230,7 +230,7 @@ A persistent Python process that keeps the Kokoro model loaded in GPU memory.
 
 ### Lifecycle
 
-- **On-demand mode** (default): speak.sh starts the daemon, which auto-shuts down
+- **On-demand mode** (default): just-aloud.sh starts the daemon, which auto-shuts down
   after 5 minutes idle.
 - **Managed mode** (`--managed`): the Swift app starts the daemon, which shuts down
   when its parent dies (orphan detection via `os.getppid()`).
@@ -249,7 +249,7 @@ exits 0, and the caller waits for the existing daemon's socket.
 
 ### Cancellation
 
-When speak.sh is killed (toggle), its socket connection drops. The daemon detects
+When just-aloud.sh is killed (toggle), its socket connection drops. The daemon detects
 this via `select()` on the client socket between generation segments and raises
 `CancelledError`, which aborts generation and cleans up temp files.
 
@@ -271,11 +271,11 @@ immediately. The heavier gc/cache-clear is deferred to idle time.
 
 ### Temp files
 
-- speak.sh creates temp files/dirs with prefix `speak11_tts_`.
+- just-aloud.sh creates temp files/dirs with prefix `just_aloud_tts_`.
 - The pipeline tracks `_PREV_TMP_FILE` / `_PREV_TMP_DIR` and deletes after
   `wait_audio` (ensuring afplay has finished reading).
 - `cleanup()` removes current and previous temp files.
-- The daemon cleans up orphaned `speak11_tts_*` dirs on startup.
+- The daemon cleans up orphaned `just_aloud_tts_*` dirs on startup.
 
 ### STATUS_FILE persists
 
@@ -328,7 +328,7 @@ All fields, their bash variable names, and defaults:
 |---|---|---|---|
 | Backend | TTS_BACKEND | auto | auto, elevenlabs, local |
 | Installed backends | TTS_BACKENDS_INSTALLED | elevenlabs | elevenlabs, local, both |
-| ElevenLabs voice | VOICE_ID | pFZP5JQG7iQjIQuC4Bku | Lily |
+| ElevenLabs voice | VOICE_ID | empty | Supplied by the user |
 | ElevenLabs model | MODEL_ID | eleven_flash_v2_5 | Flash v2.5 |
 | ElevenLabs speed | SPEED | 1.0 | Range: 0.7-1.2 |
 | Stability | STABILITY | 0.5 | |
@@ -338,7 +338,7 @@ All fields, their bash variable names, and defaults:
 | Local voice | LOCAL_VOICE | bf_lily | Prefix determines lang_code |
 | Local speed | LOCAL_SPEED | 1.0 | Range: 0.5-2.0 |
 
-All three sources (speak.sh, Speak11.swift, install.command) must agree on defaults.
+All three sources (just-aloud.sh, Just Aloud.swift, install.command) must agree on defaults.
 
 ### Voice -> lang_code derivation
 
@@ -353,24 +353,24 @@ This is passed via `${LOCAL_VOICE:0:1}` in bash.
 
 | Path | Purpose |
 |---|---|
-| `~/.config/speak11/config` | Config file (shared between Swift and bash) |
-| `~/.local/bin/speak.sh` | Installed speak script |
+| `~/.config/just-aloud/config` | Config file (shared between Swift and bash) |
+| `~/.local/bin/just-aloud.sh` | Installed speak script |
 | `~/.local/bin/tts_server.py` | Installed daemon |
 | `~/.local/bin/install-local.sh` | Installed local TTS installer |
-| `~/.local/bin/speak11-audio` | Compiled CoreAudio CLI (mute check/unmute) |
+| `~/.local/bin/just-aloud-audio` | Compiled CoreAudio CLI (mute check/unmute) |
 | `~/.local/bin/uninstall.command` | Installed uninstaller |
-| `~/.local/share/speak11/venv/` | Python venv with mlx-audio |
-| `~/.local/share/speak11/tts.sock` | Daemon Unix socket |
-| `~/.local/share/speak11/tts_server.pid` | Daemon PID file |
-| `~/.local/share/speak11/tts_server.lock` | Daemon flock file |
-| `~/.local/share/speak11/tts.log` | Shared log file |
-| `~/.local/share/speak11/install.log` | Installer error log (pip, swiftc output) |
-| `$TMPDIR/speak11_tts.pid` | speak.sh PID file |
-| `$TMPDIR/speak11_text` | Full text for respeak |
-| `$TMPDIR/speak11_status` | Playback position for respeak |
-| `~/Applications/Speak11.app` | Compiled menu bar app |
-| `~/Library/Services/Speak Selection.workflow` | Automator Quick Action |
-| `/tmp/speak11_install.lock` | Installer single-instance lock |
+| `~/.local/share/just-aloud/venv/` | Python venv with mlx-audio |
+| `~/.local/share/just-aloud/tts.sock` | Daemon Unix socket |
+| `~/.local/share/just-aloud/tts_server.pid` | Daemon PID file |
+| `~/.local/share/just-aloud/tts_server.lock` | Daemon flock file |
+| `~/.local/share/just-aloud/tts.log` | Shared log file |
+| `~/.local/share/just-aloud/install.log` | Installer error log (pip, swiftc output) |
+| `$TMPDIR/just_aloud_tts.pid` | just-aloud.sh PID file |
+| `$TMPDIR/just_aloud_text` | Full text for respeak |
+| `$TMPDIR/just_aloud_status` | Playback position for respeak |
+| `~/Applications/Just Aloud.app` | Compiled menu bar app |
+| `~/Library/Services/Speak Selection with Just Aloud.workflow` | Automator Quick Action |
+| `/tmp/just_aloud_install.lock` | Installer single-instance lock |
 
 
 ## Testing
@@ -386,7 +386,7 @@ invariant. Simulations mirror the actual pipeline structure to catch real bugs
 Pipeline simulations replace real TTS/playback with lightweight stubs:
 - `run_tts` writes sentence text to a file (10ms sleep for generation time).
 - `play_audio` logs the sentence and starts a background sleep (simulated playback).
-- Traps match speak.sh exactly: `trap cleanup EXIT; trap 'exit 143' TERM; trap 'exit 130' INT`.
+- Traps match just-aloud.sh exactly: `trap cleanup EXIT; trap 'exit 143' TERM; trap 'exit 130' INT`.
 
 Interrupt tests use `_run_interrupt_test` which:
 1. Starts the simulation in the background.
@@ -422,7 +422,7 @@ on first match, O(n) worst case).
 
 ### Minimize forks in hot paths
 
-speak.sh runs on every hotkey press. Each `fork+exec` costs 5-50ms. Rules:
+just-aloud.sh runs on every hotkey press. Each `fork+exec` costs 5-50ms. Rules:
 
 1. **json_encode is pure bash.** No python3 fork per sentence.
 2. **tts_daemon_request uses python socket.** One fork per daemon request
@@ -436,7 +436,7 @@ speak.sh runs on every hotkey press. Each `fork+exec` costs 5-50ms. Rules:
 
 ### Profiling
 
-`tests/profile.sh` measures each phase of speak.sh. Run it to identify
+`tests/profile.sh` measures each phase of just-aloud.sh. Run it to identify
 regressions or new optimization opportunities:
 
 ```bash
@@ -449,7 +449,7 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
 
 ## Rules for changes
 
-1. **Default values must match** across speak.sh, Speak11.swift, install.command, and tts_server.py.
+1. **Default values must match** across just-aloud.sh, Just Aloud.swift, install.command, and tts_server.py.
 
 2. **Traps must be separate.** Never use `trap handler EXIT INT TERM`. Always:
    ```bash
@@ -480,7 +480,7 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
 7. **Cleanup is idempotent.** All cleanup operations must be safe to call multiple
    times (kill dead PIDs, rm missing files).
 
-8. **No set -e in speak.sh.** The script does not use `set -e` at the top level.
+8. **No set -e in just-aloud.sh.** The script does not use `set -e` at the top level.
    Functions must not introduce it. `cleanup()` explicitly calls `set +e`.
 
 9. **phonemizer-fork, not phonemizer.** The upstream `phonemizer` package breaks
@@ -512,11 +512,11 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     clearer about intent and doesn't leave a window where failures are silently
     ignored.
 
-16. **Installer is single-instance.** `mkdir /tmp/speak11_install.lock` acts as
+16. **Installer is single-instance.** `mkdir /tmp/just_aloud_install.lock` acts as
     an atomic lock. Stale locks (dead PID) are reclaimed. The lock is removed in
     the EXIT trap.
 
-17. **Re-install preserves user config.** When `~/.config/speak11/config` already
+17. **Re-install preserves user config.** When `~/.config/just-aloud/config` already
     exists, the installer updates only `TTS_BACKEND` and `TTS_BACKENDS_INSTALLED`.
     All other fields (voice, speed, stability, etc.) are preserved.
 
@@ -538,23 +538,23 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     space: `${resp#*\"key\":}` then `${val# }`.
 
 22. **Mute check is three-tier.** From the app: in-process CoreAudio
-    (microseconds). Standalone: `speak11-audio` CLI (35ms). Last resort:
-    osascript (80-500ms). `SPEAK11_MUTE_CHECKED=1` env var tells speak.sh
+    (microseconds). Standalone: `just-aloud-audio` CLI (35ms). Last resort:
+    osascript (80-500ms). `JUST_ALOUD_MUTE_CHECKED=1` env var tells just-aloud.sh
     the app already handled it.
 
 23. **Profiler detects daemon bypass.** When daemon communication fails,
-    speak.sh falls back to cold model loading (~3s). `tests/profile.sh`
+    just-aloud.sh falls back to cold model loading (~3s). `tests/profile.sh`
     checks for this and prints a warning so silent fallbacks don't go
     unnoticed.
 
 24. **Releases decouple users from HEAD.** Download links point to
-    `releases/latest/download/speak11.zip`, not the main branch archive.
+    `releases/latest/download/just-aloud.zip`, not the main branch archive.
     To cut a new release:
-    `git archive --format=zip --prefix=speak11/ -o /tmp/speak11.zip HEAD`
-    then `gh release create vX.Y.Z /tmp/speak11.zip --title "Speak11 vX.Y.Z" --notes "..."`.
+    `git archive --format=zip --prefix=just-aloud/ -o /tmp/just-aloud.zip HEAD`
+    then `gh release create vX.Y.Z /tmp/just-aloud.zip --title "Just Aloud vX.Y.Z" --notes "..."`.
     The `/latest/` URL auto-resolves to the newest release.
 
-25. **Text normalization runs before TTS.** `normalize_text()` in speak.sh
+25. **Text normalization runs before TTS.** `normalize_text()` in just-aloud.sh
     calls `normalize.py` (standalone Python module) via stdin/stdout, with a
     bash `sed` fallback for hyphen rejoining when Python is unavailable.
     Architecture: source detection -> front-end -> shared back-end. Each
@@ -569,7 +569,7 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     Unicode fractions, hyphenated word rejoining, paragraph-aware line joining,
     scientific notation, isotope notation, bullet/list markers.
     **LaTeX front-end (`_frontend_latex`):** L1: comment/preamble stripping.
-    L2: custom macro expansion (with ~/.config/speak11/latex_macros.tex cache).
+    L2: custom macro expansion (with ~/.config/just-aloud/latex_macros.tex cache).
     L3: environment dispatch table (equation, align, figure, table, lists,
     theorem-likes, skips). L4: text macros (sections, citations, cross-refs,
     siunitx, mhchem, special chars). L5: math-to-speech conversion (22-rule
@@ -588,7 +588,7 @@ Color-coded output: green (<10ms), yellow (10-100ms), red (>100ms).
     final cleanup. Dependencies: ftfy and pylatexenc (installed in venv).
 
 26. **API key is validated on entry.** Both `install.command` and
-    `Speak11Settings.swift` validate the API key by calling
+    `Just AloudSettings.swift` validate the API key by calling
     `GET /v1/user/subscription` with the `xi-api-key` header. 200 means valid,
     401 means invalid key, 403 means missing permissions, 000/timeout means
     network error. The dialog loops (retry) until the key validates or the

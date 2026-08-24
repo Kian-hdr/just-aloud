@@ -1,5 +1,5 @@
 #!/bin/bash
-# speak.sh — Speak11 for macOS
+# just-aloud: Just Aloud for macOS
 # Select text in any app, press your hotkey, hear it spoken.
 #
 # Supports three backend modes:
@@ -8,7 +8,7 @@
 #   - auto        — tries ElevenLabs first, falls back to local silently
 #
 # Requirements: afplay (built into macOS), curl (for ElevenLabs),
-#   venv python at ~/.local/share/speak11/venv (installed by install.command)
+#   venv python at ~/.local/share/just-aloud/venv (installed by install.command)
 
 # ── Configuration ──────────────────────────────────────────────────
 
@@ -18,10 +18,11 @@ _ENV_TTS_BACKENDS_INSTALLED="${TTS_BACKENDS_INSTALLED:-}"
 _ENV_LOCAL_VOICE="${LOCAL_VOICE:-}"
 _ENV_LOCAL_SPEED="${LOCAL_SPEED:-}"
 _ENV_SPEED="${SPEED:-}"
+_ENV_PLAYBACK_SPEED="${PLAYBACK_SPEED:-}"
 _ENV_SENTENCE_PAUSE="${SENTENCE_PAUSE:-}"
 
 # Load settings written by the menu bar settings app.
-_CONFIG="$HOME/.config/speak11/config"
+_CONFIG="$HOME/.config/just-aloud/config"
 [ -f "$_CONFIG" ] && source "$_CONFIG"
 
 # Priority: environment variable > config file > hardcoded default.
@@ -31,8 +32,8 @@ LOCAL_VOICE="${_ENV_LOCAL_VOICE:-${LOCAL_VOICE:-bf_lily}}"
 
 # ElevenLabs settings (loaded when needed — both "elevenlabs" and "auto" modes)
 if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
-    ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-$(security find-generic-password -a "speak11" -s "speak11-api-key" -w 2>/dev/null)}"
-    VOICE_ID="${ELEVENLABS_VOICE_ID:-${VOICE_ID:-pFZP5JQG7iQjIQuC4Bku}}"
+    ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-$(security find-generic-password -a "just-aloud" -s "just-aloud-api-key" -w 2>/dev/null)}"
+    VOICE_ID="${ELEVENLABS_VOICE_ID:-${VOICE_ID:-}}"
     MODEL_ID="${ELEVENLABS_MODEL_ID:-${MODEL_ID:-eleven_flash_v2_5}}"
     STABILITY="${STABILITY:-0.5}"
     SIMILARITY_BOOST="${SIMILARITY_BOOST:-0.75}"
@@ -41,6 +42,7 @@ if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
 fi
 
 SPEED="${_ENV_SPEED:-${SPEED:-1.0}}"
+PLAYBACK_SPEED="${_ENV_PLAYBACK_SPEED:-${PLAYBACK_SPEED:-1.0}}"
 LOCAL_SPEED="${_ENV_LOCAL_SPEED:-${LOCAL_SPEED:-1.0}}"
 SENTENCE_PAUSE="${_ENV_SENTENCE_PAUSE:-${SENTENCE_PAUSE:-400}}"
 
@@ -48,6 +50,7 @@ SENTENCE_PAUSE="${_ENV_SENTENCE_PAUSE:-${SENTENCE_PAUSE:-400}}"
 # Prevents malformed JSON if config is manually edited with bad values.
 _validate_num() { [[ "$2" =~ ^[0-9]*\.?[0-9]+$ ]] && echo "$2" || echo "$3"; }
 SPEED=$(_validate_num SPEED "$SPEED" "1.0")
+PLAYBACK_SPEED=$(_validate_num PLAYBACK_SPEED "$PLAYBACK_SPEED" "1.0")
 LOCAL_SPEED=$(_validate_num LOCAL_SPEED "$LOCAL_SPEED" "1.0")
 SENTENCE_PAUSE=$(_validate_num SENTENCE_PAUSE "$SENTENCE_PAUSE" "400")
 if [ "$TTS_BACKEND" = "elevenlabs" ] || [ "$TTS_BACKEND" = "auto" ]; then
@@ -62,16 +65,16 @@ fi
 # resolved backend (auto → local when there is no API key).
 if [ "$TTS_BACKEND" = "auto" ]; then
     TTS_BACKENDS_INSTALLED="both"  # auto always enables fallback
-    if [ -z "$ELEVENLABS_API_KEY" ]; then
-        # No API key available — go straight to local TTS
+    if [ -z "$ELEVENLABS_API_KEY" ] || [ -z "$VOICE_ID" ]; then
+        # Cloud configuration is incomplete, so go straight to local TTS.
         TTS_BACKEND="local"
     fi
 fi
 
 # ── Toggle: stop playback if already running ───────────────────────
-PID_FILE="${TMPDIR:-/tmp}/speak11_tts.pid"
-TEXT_FILE="${TMPDIR:-/tmp}/speak11_text"
-STATUS_FILE="${TMPDIR:-/tmp}/speak11_status"
+PID_FILE="${TMPDIR:-/tmp}/just_aloud_tts.pid"
+TEXT_FILE="${TMPDIR:-/tmp}/just_aloud_text"
+STATUS_FILE="${TMPDIR:-/tmp}/just_aloud_status"
 if [ -f "$PID_FILE" ]; then
     OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
     if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -115,11 +118,17 @@ TEXT=$(printf '%s' "$TEXT" | iconv -f UTF-8 -t UTF-8//IGNORE)
 # Cleans artifacts from PDF copy-paste so TTS engines read text naturally.
 # Uses normalize.py (venv python + ftfy); falls back to bash sed if absent.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/speak11/venv/bin/python3}"
+VENV_PYTHON="${VENV_PYTHON:-$HOME/.local/share/just-aloud/venv/bin/python3}"
+NORMALIZE_SCRIPT="$SCRIPT_DIR/just-aloud-normalize.py"
+[ -f "$NORMALIZE_SCRIPT" ] || NORMALIZE_SCRIPT="$SCRIPT_DIR/normalize.py"
+TTS_SERVER_SCRIPT="$SCRIPT_DIR/just-aloud-tts-server.py"
+[ -f "$TTS_SERVER_SCRIPT" ] || TTS_SERVER_SCRIPT="$SCRIPT_DIR/tts_server.py"
+LOCAL_INSTALLER="$SCRIPT_DIR/just-aloud-install-local"
+[ -f "$LOCAL_INSTALLER" ] || LOCAL_INSTALLER="$SCRIPT_DIR/install-local.sh"
 normalize_text() {
     local result
     if [ -x "$VENV_PYTHON" ] && \
-       result=$(printf '%s' "$1" | "$VENV_PYTHON" "$SCRIPT_DIR/normalize.py" 2>/dev/null); then
+       result=$(printf '%s' "$1" | "$VENV_PYTHON" "$NORMALIZE_SCRIPT" 2>/dev/null); then
         printf '%s' "$result"
     else
         # Python unavailable -- bash-only fallback: rejoin hyphenated line-end splits
@@ -127,16 +136,16 @@ normalize_text() {
     fi
 }
 TEXT=$(normalize_text "$TEXT")
-# ── Locate speak11-audio CLI ──────────────────────────────────────
+# ── Locate just-aloud-audio CLI ──────────────────────────────────────
 # Used for both the mute check (below) and the audio queue player (later).
-_AUDIO_TOOL="$SCRIPT_DIR/speak11-audio"
-[ -x "$_AUDIO_TOOL" ] || _AUDIO_TOOL="$HOME/.local/bin/speak11-audio"
+_AUDIO_TOOL="$SCRIPT_DIR/just-aloud-audio"
+[ -x "$_AUDIO_TOOL" ] || _AUDIO_TOOL="$HOME/.local/bin/just-aloud-audio"
 
 # ── Mute check ────────────────────────────────────────────────────
-# When launched from Speak11.app, the mute check is done in-process via
-# CoreAudio (microseconds). SPEAK11_MUTE_CHECKED=1 signals this.
-# Standalone: speak11-audio CLI (35ms) or osascript fallback (80-500ms).
-if [ "${SPEAK11_MUTE_CHECKED:-}" != "1" ]; then
+# When launched from Just Aloud.app, the mute check is done in-process via
+# CoreAudio (microseconds). JUST_ALOUD_MUTE_CHECKED=1 signals this.
+# Standalone: just-aloud-audio CLI (35ms) or osascript fallback (80-500ms).
+if [ "${JUST_ALOUD_MUTE_CHECKED:-}" != "1" ]; then
     if [ -x "$_AUDIO_TOOL" ]; then
         _is_muted() { "$_AUDIO_TOOL" is-muted; }
         _unmute()   { "$_AUDIO_TOOL" unmute 2>/dev/null; }
@@ -145,7 +154,7 @@ if [ "${SPEAK11_MUTE_CHECKED:-}" != "1" ]; then
         _unmute()   { osascript -e 'set volume without output muted' 2>/dev/null; }
     fi
     if _is_muted; then
-        mute_result=$(osascript -e 'button returned of (display dialog "Your Mac is muted." with title "Speak11" buttons {"Cancel", "Unmute & Play"} default button "Unmute & Play" with icon caution)' 2>/dev/null) || exit 0
+        mute_result=$(osascript -e 'button returned of (display dialog "Your Mac is muted." with title "Just Aloud" buttons {"Cancel", "Unmute & Play"} default button "Unmute & Play" with icon caution)' 2>/dev/null) || exit 0
         if [ "$mute_result" = "Unmute & Play" ]; then
             _unmute
         fi
@@ -158,7 +167,11 @@ printf '%s' "$TEXT" > "$TEXT_FILE"
 # ── Preflight checks ───────────────────────────────────────────────
 if [ "$TTS_BACKEND" = "elevenlabs" ]; then
     if [ -z "$ELEVENLABS_API_KEY" ]; then
-        osascript -e 'display dialog "ElevenLabs API key not found." & return & return & "Run install.command to store your key, or set the ELEVENLABS_API_KEY environment variable." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+        osascript -e 'display dialog "ElevenLabs API key not found." & return & return & "Run install.command to store your key, or set the ELEVENLABS_API_KEY environment variable." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution'
+        exit 1
+    fi
+    if [ -z "$VOICE_ID" ]; then
+        osascript -e 'display dialog "ElevenLabs Voice ID not configured." & return & return & "Open Just Aloud → Voice → Add Custom Voice ID, or set ELEVENLABS_VOICE_ID." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution'
         exit 1
     fi
 fi
@@ -204,9 +217,9 @@ trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
-# Trace helper: high-resolution timestamp to stderr when SPEAK11_TRACE is set.
+# Trace helper: high-resolution timestamp to stderr when JUST_ALOUD_TRACE is set.
 _trace() {
-    [ -n "$SPEAK11_TRACE" ] || return 0
+    [ -n "$JUST_ALOUD_TRACE" ] || return 0
     printf 'TRACE %-16s %s\n' "$1" \
         "$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time')" >&2
 }
@@ -249,9 +262,9 @@ for p in parts:
 # memory for near-instant response.  Falls back to direct invocation if
 # the daemon is unavailable.
 
-LOG_FILE="$HOME/.local/share/speak11/tts.log"
+LOG_FILE="$HOME/.local/share/just-aloud/tts.log"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
-TTS_SOCK="${TTS_SOCK:-$HOME/.local/share/speak11/tts.sock}"
+TTS_SOCK="${TTS_SOCK:-$HOME/.local/share/just-aloud/tts.sock}"
 
 # Start the TTS daemon if not already running.
 # The daemon uses flock internally — if another daemon is already running,
@@ -259,7 +272,7 @@ TTS_SOCK="${TTS_SOCK:-$HOME/.local/share/speak11/tts.sock}"
 # daemon's socket instead.
 start_tts_daemon() {
     local PY="$1"
-    "$PY" "$SCRIPT_DIR/tts_server.py" </dev/null >> "$LOG_FILE" 2>&1 &
+    "$PY" "$TTS_SERVER_SCRIPT" </dev/null >> "$LOG_FILE" 2>&1 &
     local daemon_pid=$!
     # Wait for socket to appear (model loading can take 5-30s)
     local i=0
@@ -345,7 +358,7 @@ run_local_tts() {
     # Sets caller's `audio_file` on success via dynamic scoping.
     _daemon_request_bg() {
         local _req_out
-        _req_out=$(mktemp "${TMPDIR:-/tmp/}speak11_req_XXXXXXXXXX") || return 1
+        _req_out=$(mktemp "${TMPDIR:-/tmp/}just-aloud_req_XXXXXXXXXX") || return 1
         _SOCK="$TTS_SOCK" _VOICE="${LOCAL_VOICE:-bf_lily}" \
             _SPEED="$LOCAL_SPEED" _LANG="${LOCAL_VOICE:0:1}" \
             tts_daemon_request > "$_req_out" 2>> "$LOG_FILE" &
@@ -380,20 +393,20 @@ run_local_tts() {
 
     # Fallback: direct invocation (cold start, slow but reliable)
     echo "daemon unavailable, falling back to direct invocation" >> "$LOG_FILE" 2>/dev/null
-    TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp/}speak11_tts_XXXXXXXXXX")
+    TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp/}just_aloud_tts_XXXXXXXXXX")
     (cd "$TMP_DIR" && "$PY" -m mlx_audio.tts.generate \
         --model mlx-community/Kokoro-82M-bf16 \
         --text "$TEXT" \
         --voice "${LOCAL_VOICE:-bf_lily}" \
         --speed "$LOCAL_SPEED" \
         --lang_code "${LOCAL_VOICE:0:1}" \
-        --file_prefix speak11 \
+        --file_prefix just-aloud \
         --audio_format wav \
         --join_audio 2>> "$LOG_FILE") &
     _DAEMON_PID=$!
     wait "$_DAEMON_PID" 2>/dev/null
     _DAEMON_PID=""
-    TMP_FILE="$TMP_DIR/speak11.wav"
+    TMP_FILE="$TMP_DIR/just-aloud.wav"
     [ -s "$TMP_FILE" ]
 }
 
@@ -405,18 +418,18 @@ play_audio() {
     local _epoch="${_epoch_int}.${_BASE_EPOCH#*.}"
     if [ -n "$_AUDIO_PLAYER_PID" ]; then
         # Fast path: queue player (near-zero inter-sentence gap + configurable pause)
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$TMP_FILE" "$_epoch" "${1:-0}" "${2:-0}" "$STATUS_FILE" "${3:-0}" >&7
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$TMP_FILE" "$_epoch" "${1:-0}" "${2:-0}" "$STATUS_FILE" "${3:-0}" "$PLAYBACK_SPEED" >&7
         read -r _duration <&8   # blocks ~1ms (duration line)
         _AUDIO_PLAYING=true
     else
-        # Fallback: afplay (when speak11-audio is unavailable)
+        # Fallback: afplay (when just-aloud-audio is unavailable)
         local duration
         if [[ "$TMP_FILE" == *.wav ]]; then
             duration=$(wav_duration "$TMP_FILE" 2>/dev/null)
         fi
         [ -z "$duration" ] && duration=$(afinfo "$TMP_FILE" 2>/dev/null | awk '/estimated duration/{print $3}')
         printf '%s\n%s\n%s\n%s\n' "$_epoch" "${duration:-0}" "${1:-0}" "${2:-0}" > "$STATUS_FILE"
-        afplay "$TMP_FILE" &
+        afplay -r "$PLAYBACK_SPEED" -q 1 "$TMP_FILE" &
         PLAY_PID=$!
     fi
 }
@@ -466,7 +479,7 @@ run_elevenlabs_tts() {
         return 1
     fi
 
-    TMP_FILE=$(mktemp "${TMPDIR:-/tmp/}speak11_tts_XXXXXXXXXX")
+    TMP_FILE=$(mktemp "${TMPDIR:-/tmp/}just_aloud_tts_XXXXXXXXXX")
     [ -z "$TMP_FILE" ] || [ ! -f "$TMP_FILE" ] && return 1
 
     local code_file="${TMP_FILE}.code"
@@ -509,10 +522,10 @@ _BASE_EPOCH=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time')
 _BASE_SECONDS=$SECONDS
 
 # Start persistent audio queue player (eliminates ~1s afplay overhead per sentence).
-# Falls back to afplay if speak11-audio is unavailable or SPEAK11_NO_QUEUE_PLAYER is set.
-if [ -x "$_AUDIO_TOOL" ] && [ -z "$SPEAK11_NO_QUEUE_PLAYER" ]; then
-    _AUDIO_IN="${TMPDIR:-/tmp}/speak11_ain_$$"
-    _AUDIO_OUT="${TMPDIR:-/tmp}/speak11_aout_$$"
+# Falls back to afplay if just-aloud-audio is unavailable or JUST_ALOUD_NO_QUEUE_PLAYER is set.
+if [ -x "$_AUDIO_TOOL" ] && [ -z "$JUST_ALOUD_NO_QUEUE_PLAYER" ]; then
+    _AUDIO_IN="${TMPDIR:-/tmp}/just_aloud_ain_$$"
+    _AUDIO_OUT="${TMPDIR:-/tmp}/just_aloud_aout_$$"
     mkfifo "$_AUDIO_IN" "$_AUDIO_OUT"
     "$_AUDIO_TOOL" play-queue < "$_AUDIO_IN" > "$_AUDIO_OUT" &
     _AUDIO_PLAYER_PID=$!
@@ -525,7 +538,7 @@ fi
 if [ "$TTS_BACKEND" = "local" ]; then
     _EFF_SPEED="$LOCAL_SPEED"
 else
-    _EFF_SPEED="$SPEED"
+    _EFF_SPEED=$(/usr/bin/perl -e "printf '%.4f', $SPEED * $PLAYBACK_SPEED")
 fi
 _PAUSE_MS=$(/usr/bin/perl -e "printf '%d', $SENTENCE_PAUSE / $_EFF_SPEED")
 
@@ -543,7 +556,7 @@ if [ "$TTS_BACKEND" = "local" ]; then
         _ok=$?
         _trace "gen_done"
         if $_FIRST && [ $_ok -ne 0 ]; then
-            osascript -e 'display dialog "Local TTS generation failed." & return & return & "Re-run the Speak11 installer to repair the local TTS setup." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+            osascript -e 'display dialog "Local TTS generation failed." & return & return & "Re-run the Just Aloud installer to repair the local TTS setup." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution'
             exit 1
         fi
         if [ $_ok -eq 0 ]; then
@@ -598,10 +611,10 @@ else
                     wait_audio
                     exit 0
                 fi
-                osascript -e 'display dialog "Could not reach ElevenLabs, and local TTS also failed." & return & return & "The Kokoro model may need to download first — try again while online." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+                osascript -e 'display dialog "Could not reach ElevenLabs, and local TTS also failed." & return & return & "The Kokoro model may need to download first — try again while online." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution'
                 exit 1
             fi
-            osascript -e 'display dialog "Could not reach ElevenLabs." & return & return & "Check your internet connection, or install local TTS for offline use." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+            osascript -e 'display dialog "Could not reach ElevenLabs." & return & return & "Check your internet connection, or install local TTS for offline use." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution'
             exit 1
         fi
 
@@ -614,14 +627,14 @@ else
                     wait_audio
                     exit 0
                 fi
-                osascript -e 'display dialog "ElevenLabs quota exceeded, and local TTS also failed." & return & return & "Re-run the Speak11 installer to repair the local TTS setup." with title "Speak11" buttons {"OK"} default button "OK" with icon caution'
+                osascript -e 'display dialog "ElevenLabs quota exceeded, and local TTS also failed." & return & return & "Re-run the Just Aloud installer to repair the local TTS setup." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution'
                 exit 1
             fi
             if [ "$(uname -m)" = "arm64" ]; then
-                QUOTA_RESULT=$(osascript -e 'button returned of (display dialog "You'\''ve hit your ElevenLabs quota." & return & return & "Install mlx-audio for free local TTS, or upgrade your ElevenLabs plan." with title "Speak11" buttons {"Not Now", "Install Local TTS"} default button "Install Local TTS" with icon caution)' 2>/dev/null || true)
+                QUOTA_RESULT=$(osascript -e 'button returned of (display dialog "You'\''ve hit your ElevenLabs quota." & return & return & "Install mlx-audio for free local TTS, or upgrade your ElevenLabs plan." with title "Just Aloud" buttons {"Not Now", "Install Local TTS"} default button "Install Local TTS" with icon caution)' 2>/dev/null || true)
                 if [ "$QUOTA_RESULT" = "Install Local TTS" ]; then
-                    if bash "$SCRIPT_DIR/install-local.sh" 2>/dev/null; then
-                        osascript -e 'display dialog "Local TTS installed and ready." & return & return & "Future requests will fall back to local when ElevenLabs is unavailable." with title "Speak11" buttons {"OK"} default button "OK"' 2>/dev/null
+                    if bash "$LOCAL_INSTALLER" 2>/dev/null; then
+                        osascript -e 'display dialog "Local TTS installed and ready." & return & return & "Future requests will fall back to local when ElevenLabs is unavailable." with title "Just Aloud" buttons {"OK"} default button "OK"' 2>/dev/null
                         rm -f "$TMP_FILE"; TMP_FILE=""
                         if run_local_tts; then
                             play_audio
@@ -629,7 +642,7 @@ else
                             exit 0
                         fi
                     else
-                        osascript -e 'display dialog "Could not install local TTS." & return & return & "An internet connection is required for the first install.\nPlease check your connection and try again." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
+                        osascript -e 'display dialog "Could not install local TTS." & return & return & "An internet connection is required for the first install.\nPlease check your connection and try again." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null
                     fi
                 fi
                 exit 1
@@ -641,7 +654,7 @@ else
             SAFE_ERROR=$(cat "$TMP_FILE" 2>/dev/null \
                 | head -c 300 \
                 | tr -d '\000-\037"\\')
-            osascript -e "display dialog \"ElevenLabs API error (HTTP ${HTTP_CODE}):\" & return & return & \"${SAFE_ERROR:-Unknown error}\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution"
+            osascript -e "display dialog \"ElevenLabs API error (HTTP ${HTTP_CODE}):\" & return & return & \"${SAFE_ERROR:-Unknown error}\" with title \"Just Aloud\" buttons {\"OK\"} default button \"OK\" with icon caution"
             exit 1
         fi
     fi

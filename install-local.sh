@@ -1,17 +1,17 @@
 #!/bin/bash
-# install-local.sh — Install mlx-audio for local TTS in Speak11
+# install-local.sh — Install mlx-audio for local TTS in Just Aloud
 #
-# Creates a Python venv at ~/.local/share/speak11/venv with mlx-audio and
+# Creates a Python venv at ~/.local/share/just-aloud/venv with mlx-audio and
 # all dependencies.  Requires Python 3.10+ — if none is found on the system,
 # a standalone build is downloaded automatically.
 #
 # Called by install.command (during setup), speak.sh (on quota hit), or the
 # menu bar settings app (when selecting a backend that needs local TTS).
-# Updates ~/.config/speak11/config to reflect the new backend.
+# Updates ~/.config/just-aloud/config to reflect the new backend.
 
 set -eo pipefail
 
-VENV_DIR="${VENV_DIR:-$HOME/.local/share/speak11/venv}"
+VENV_DIR="${VENV_DIR:-$HOME/.local/share/just-aloud/venv}"
 
 # ── Apple Silicon check ──────────────────────────────────────────
 if [ "$(uname -m)" != "arm64" ]; then
@@ -19,17 +19,16 @@ if [ "$(uname -m)" != "arm64" ]; then
     exit 1
 fi
 
-# ── Find Python 3.10+ ───────────────────────────────────────────
+# ── Find Python 3.10-3.12 ──────────────────────────────────────
 find_python() {
-    # Check common locations for Python 3.10+
-    for py in python3.13 python3.12 python3.11 python3.10 \
-              /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 \
+    # misaki 0.8.4 does not support Python 3.13.
+    for py in python3.12 python3.11 python3.10 \
+              /opt/homebrew/bin/python3.12 \
               /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3.10 \
               /opt/homebrew/bin/python3 \
-              /usr/local/bin/python3.13 /usr/local/bin/python3.12 \
+              /usr/local/bin/python3.12 \
               /usr/local/bin/python3.11 /usr/local/bin/python3.10 \
               /usr/local/bin/python3 \
-              /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 \
               /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
               /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 \
               /Library/Frameworks/Python.framework/Versions/3.10/bin/python3 \
@@ -40,7 +39,7 @@ find_python() {
         p=$(command -v "$py" 2>/dev/null || echo "$py")
         [ -x "$p" ] || continue
         local ver
-        ver=$("$p" -c "import sys; print(sys.version_info >= (3,10))" 2>/dev/null) || continue
+        ver=$("$p" -c "import sys; print((3,10) <= sys.version_info < (3,13))" 2>/dev/null) || continue
         if [ "$ver" = "True" ]; then
             echo "$p"
             return 0
@@ -52,7 +51,7 @@ find_python() {
 # ── Download standalone Python ────────────────────────────────────
 # If no system Python 3.10+ exists, fetch a standalone build from
 # python-build-standalone (Astral).  ~17 MB download, ~80 MB extracted.
-STANDALONE_DIR="$HOME/.local/share/speak11/python"
+STANDALONE_DIR="$HOME/.local/share/just-aloud/python"
 STANDALONE_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260211/cpython-3.12.12+20260211-aarch64-apple-darwin-install_only.tar.gz"
 STANDALONE_SHA256="20d98bd10cf59e3c16dc4e44b57be351b250fc1089e95b2839f440f79413ed47"
 
@@ -69,7 +68,7 @@ download_python() {
 
     echo "Downloading standalone Python 3.12…" >&2
     local tmp_tar
-    tmp_tar=$(mktemp /tmp/speak11-python-XXXXXX)
+    tmp_tar=$(mktemp /tmp/just-aloud-python-XXXXXX)
 
     if ! curl -fSL --progress-bar -o "$tmp_tar" "$STANDALONE_URL"; then
         rm -f "$tmp_tar"
@@ -127,7 +126,7 @@ if [ -d "$VENV_DIR" ] && "$VENV_DIR/bin/python3" -c "import mlx_audio" 2>/dev/nu
        ! "$VENV_DIR/bin/pip" show phonemizer-fork >/dev/null 2>&1; then
         echo "Upgrading phonemizer to phonemizer-fork (fixes missing word pronunciation)…"
         "$VENV_DIR/bin/pip" uninstall -y phonemizer 2>&1
-        "$VENV_DIR/bin/pip" install phonemizer-fork 2>&1
+        "$VENV_DIR/bin/pip" install phonemizer-fork==3.3.2 2>&1
     fi
 else
     echo "Creating Python venv at $VENV_DIR…"
@@ -137,8 +136,11 @@ else
     echo "Installing mlx-audio and dependencies…"
     set +e
     "$VENV_DIR/bin/pip" install --upgrade pip 2>&1
-    "$VENV_DIR/bin/pip" install mlx-audio soundfile sounddevice scipy loguru \
-        "misaki==0.8.4" num2words spacy phonemizer-fork espeakng_loader pysbd ftfy pylatexenc 2>&1
+    "$VENV_DIR/bin/pip" install "mlx-audio==0.4.8" "soundfile==0.14.0" \
+        "sounddevice==0.5.6" "scipy==1.18.0" "loguru==0.7.3" \
+        "misaki==0.8.4" "num2words==0.5.14" "spacy==3.8.15" \
+        "phonemizer-fork==3.3.2" "espeakng_loader==0.2.4" \
+        "pysbd==0.3.4" "ftfy==6.3.1" "pylatexenc==2.11" 2>&1
     pip_exit=$?
     set -e
     if [ $pip_exit -ne 0 ]; then
@@ -167,8 +169,8 @@ else
 fi
 
 # ── Update config (skip for dev/test venvs) ──────────────────────
-if [ "$VENV_DIR" = "$HOME/.local/share/speak11/venv" ]; then
-    _CONFIG="$HOME/.config/speak11/config"
+if [ "$VENV_DIR" = "$HOME/.local/share/just-aloud/venv" ]; then
+    _CONFIG="$HOME/.config/just-aloud/config"
     mkdir -p "$(dirname "$_CONFIG")"
 
     if [ -f "$_CONFIG" ]; then

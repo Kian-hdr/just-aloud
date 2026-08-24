@@ -1,5 +1,5 @@
 #!/bin/bash
-# test.sh — Test suite for Speak11
+# test.sh — Test suite for Just Aloud
 #
 # Usage:
 #   bash tests/test.sh                    # all tests (Swift compile included)
@@ -11,8 +11,8 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SPEAK_SH="$SCRIPT_DIR/speak.sh"
-SETTINGS_SWIFT="$SCRIPT_DIR/Speak11.swift"
+SPEAK_SH="$SCRIPT_DIR/just-aloud.sh"
+SETTINGS_SWIFT="$SCRIPT_DIR/JustAloud.swift"
 FAST=false
 FILTER=""
 
@@ -32,7 +32,7 @@ FAIL=0
 _SKIP_SECTION=false
 
 # Isolate tests from any real running TTS daemon
-export TTS_SOCK="/tmp/speak11_test_nosock_$$"
+export TTS_SOCK="/tmp/just-aloud_test_nosock_$$"
 
 # ── Dev venv (repo-local, gitignored, survives uninstall) ─────
 # Mirrors a full install: runs install-local.sh + adds pylatexenc.
@@ -101,7 +101,7 @@ section() {
 
 section "Config variable priority"
 
-# Inline the sourcing logic from speak.sh so we can test it in isolation.
+# Inline the sourcing logic from just-aloud.sh so we can test it in isolation.
 resolve_voice() {
     local conf="$1" env_var="${2:-}"
     (
@@ -109,7 +109,7 @@ resolve_voice() {
         [ -n "$env_var" ] && export ELEVENLABS_VOICE_ID="$env_var"
         _CONFIG="$conf"
         [ -f "$_CONFIG" ] && source "$_CONFIG"
-        VOICE_ID="${ELEVENLABS_VOICE_ID:-${VOICE_ID:-pFZP5JQG7iQjIQuC4Bku}}"
+        VOICE_ID="${ELEVENLABS_VOICE_ID:-${VOICE_ID:-}}"
         echo "$VOICE_ID"
     )
 }
@@ -117,8 +117,8 @@ resolve_voice() {
 TMPCONF=$(mktemp)
 printf 'VOICE_ID="conf-voice"\n' > "$TMPCONF"
 
-check "no config, no env → hardcoded default" \
-    "pFZP5JQG7iQjIQuC4Bku" "$(resolve_voice /nonexistent)"
+check "no config, no env → empty, user-supplied voice" \
+    "" "$(resolve_voice /nonexistent)"
 
 check "config file set → overrides hardcoded default" \
     "conf-voice" "$(resolve_voice "$TMPCONF")"
@@ -185,14 +185,14 @@ rm -f "$TMPCONF" "$TMPCONF2"
 
 section "Config numeric validation"
 
-# Structural: speak.sh validates numeric config values
-check "speak.sh validates SPEED is numeric" \
+# Structural: just-aloud.sh validates numeric config values
+check "just-aloud.sh validates SPEED is numeric" \
     "yes" "$(grep -q '_validate_num.*SPEED' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh validates STABILITY is numeric" \
+check "just-aloud.sh validates STABILITY is numeric" \
     "yes" "$(grep -q '_validate_num.*STABILITY' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh validates USE_SPEAKER_BOOST is true/false" \
+check "just-aloud.sh validates USE_SPEAKER_BOOST is true/false" \
     "yes" "$(grep -q 'USE_SPEAKER_BOOST.*true.*false\|case.*USE_SPEAKER_BOOST' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Functional: invalid SPEED falls back to default
@@ -327,13 +327,13 @@ printf '#!/bin/bash\nexit 1\n' > "$_STUBS/python3"
 chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/curl" "$_STUBS/python3"
 
 check_exit "auto + no API key + no local TTS → exits 1" 1 \
-    bash -c 'echo "hello world" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" ELEVENLABS_API_KEY="" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello world" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" ELEVENLABS_API_KEY="" TTS_BACKEND=auto JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
-# ── 7. speak.sh shellcheck / syntax ──────────────────────────────
+# ── 7. just-aloud.sh shellcheck / syntax ──────────────────────────────
 
-section "speak.sh syntax"
+section "just-aloud.sh syntax"
 
 check "bash syntax valid" "0" "$(bash -n "$SPEAK_SH" 2>/dev/null; echo $?)"
 
@@ -367,7 +367,7 @@ check "bash syntax valid" "0" "$(bash -n "$SCRIPT_DIR/uninstall.command" 2>/dev/
 
 # ── 10. Swift source structure ────────────────────────────────────
 
-section "Speak11.swift structure"
+section "JustAloud.swift structure"
 
 # Respeak support methods
 check "Swift: handleHotkey method exists" \
@@ -400,15 +400,16 @@ check "Swift: saveAPIKey method exists" \
 check "Swift: manageAPIKey method exists" \
     "yes" "$(grep -q 'func manageAPIKey' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-# Respeak wired into settings actions (scheduleRespeak called after config.save in actions)
-check "Swift: pickSpeed calls scheduleRespeak" \
-    "yes" "$(awk '/func pickSpeed/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'scheduleRespeak' && echo "yes" || echo "no")"
-check "Swift: pickVoice calls scheduleRespeak" \
-    "yes" "$(awk '/func pickVoice/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'scheduleRespeak' && echo "yes" || echo "no")"
+# Rebranded controls: the slider persists effective synthesis/playback speed,
+# and the unified preset/custom selector schedules a live comparison.
+check "Swift: effective playback speed is persisted" \
+    "yes" "$(awk '/func setEffectiveSpeed/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'playbackSpeed' && echo "yes" || echo "no")"
+check "Swift: cloud voice selection calls scheduleRespeak" \
+    "yes" "$(awk '/func pickCloudVoice/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'scheduleRespeak' && echo "yes" || echo "no")"
 
 # ── 11. Swift compile (slow ~15s) ────────────────────────────────
 
-section "Speak11.swift compile"
+section "JustAloud.swift compile"
 
 if $FAST; then
     printf "  SKIP  (--fast mode)\n"
@@ -465,16 +466,20 @@ check "env var overrides config local voice" \
 
 rm -f "$TMPCONF"
 
-# ── 12. PID file uses speak11_tts prefix ─────────────────────────
+# Cloud integration cases use an explicit non-secret test identifier because
+# the public fork intentionally has no hard-coded ElevenLabs voice ID.
+export ELEVENLABS_VOICE_ID="test-voice"
+
+# ── 12. PID file uses just_aloud_tts prefix ─────────────────────────
 
 section "PID file prefix"
 
-check "speak.sh uses speak11_tts.pid" \
-    "yes" "$(grep -q 'speak11_tts\.pid' "$SPEAK_SH" && echo "yes" || echo "no")"
-check "speak.sh does not use elevenlabs_tts.pid" \
+check "just-aloud.sh uses just_aloud_tts.pid" \
+    "yes" "$(grep -q 'just_aloud_tts\.pid' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "just-aloud.sh does not use elevenlabs_tts.pid" \
     "yes" "$(! grep -q 'elevenlabs_tts\.pid' "$SPEAK_SH" && echo "yes" || echo "no")"
-check "speak.sh uses speak11_tts_ temp file prefix" \
-    "yes" "$(grep -q 'speak11_tts_' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "just-aloud.sh uses just_aloud_tts_ temp file prefix" \
+    "yes" "$(grep -q 'just_aloud_tts_' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # ── 13. API key guard skipped for local backend ──────────────────
 
@@ -489,7 +494,7 @@ cat > "$_STUBS/python3" << PYSTUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
 done
@@ -498,7 +503,7 @@ PYSTUB
 chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/afplay" "$_STUBS/python3"
 
 check_exit "TTS_BACKEND=local with no API key → exits 0 (key not needed)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local LOCAL_VOICE=af_heart JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -532,7 +537,7 @@ cat > "$_STUBS/python3" << STUB
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
         touch "$_MARKERS/mlx_called"
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
     case "\$arg" in *tts_server.py) exit 1;; esac
@@ -544,7 +549,7 @@ chmod +x "$_STUBS/security" "$_STUBS/osascript" "$_STUBS/afplay" "$_STUBS/curl" 
 
 # Test: local backend routes to mlx_audio, not curl
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "local backend → curl NOT called" \
     "no" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "local backend → mlx_audio called" \
@@ -552,7 +557,7 @@ check "local backend → mlx_audio called" \
 
 # Test: auto backend (with API key) routes to curl, not mlx_audio
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "auto backend (key) → curl called" \
     "yes" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "auto backend (key) → mlx_audio NOT called" \
@@ -592,7 +597,7 @@ printf '#!/bin/bash\nexit 0\n' > "$_STUBS/afplay"
 printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
 chmod +x "$_STUBS"/*
 
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 
 # The 429 handler should show a special dialog offering to install local TTS,
 # not just the generic error dialog (which also happens to contain "quota" from
@@ -614,7 +619,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "HTTP 401 → exits 1 (normal error, not quota)" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 check "HTTP 401 → dialog does NOT offer local TTS install" \
     "no" "$(grep -qi 'Install Local TTS' "$_LOG" 2>/dev/null && echo "yes" || echo "no")"
@@ -649,7 +654,7 @@ PYSTUB
 chmod +x "$_STUBS"/*
 
 check_exit "local TTS generation failure → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=local JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 # Check that the dialog specifically mentions local/generation failure, not just any dialog
 check "local TTS failure → error dialog mentions generation" \
@@ -694,7 +699,7 @@ cat > "$_STUBS/python3" << STUB
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
         touch "$_MARKERS/mlx_fallback_called"
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
     case "\$arg" in *tts_server.py) exit 1;; esac
@@ -707,7 +712,7 @@ chmod +x "$_STUBS"/*
 # Test: 429 + both installed → silent fallback to local (no dialog)
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "429 + both installed → exits 0 (silent fallback)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both JUST_ALOUD_MUTE_CHECKED=1 JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "429 + both → local TTS called as fallback" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 check "429 + both → no dialog shown (silent)" \
@@ -719,7 +724,7 @@ printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"   # exit 7 = connection refused
 chmod +x "$_STUBS/curl"
 
 check_exit "network failure + both installed → exits 0 (silent fallback)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both JUST_ALOUD_MUTE_CHECKED=1 JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "network failure + both → local TTS called as fallback" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 
@@ -750,7 +755,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "429 + both + local fails → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both JUST_ALOUD_MUTE_CHECKED=1 JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "429 + both + local fails → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 
@@ -760,14 +765,14 @@ printf '#!/bin/bash\nexit 7\n' > "$_STUBS/curl"
 chmod +x "$_STUBS/curl"
 
 check_exit "network failure + both + local fails → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=both JUST_ALOUD_MUTE_CHECKED=1 JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "network failure + both + local fails → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 
 # Test: network failure + elevenlabs only → error dialog, not fallback
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "network failure + elevenlabs only → exits 1" 1 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=elevenlabs SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto TTS_BACKENDS_INSTALLED=elevenlabs JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "network failure + elevenlabs only → error dialog shown" \
     "yes" "$([ -s "$_LOG" ] && echo "yes" || echo "no")"
 check "network failure + elevenlabs only → no fallback to local" \
@@ -798,18 +803,18 @@ check "install-local.sh upgrades existing venvs from phonemizer to phonemizer-fo
 
 section "Respeak support (play_audio, TEXT_FILE, STATUS_FILE)"
 
-# Verify play_audio function exists in speak.sh
-check "speak.sh defines play_audio function" \
+# Verify play_audio function exists in just-aloud.sh
+check "just-aloud.sh defines play_audio function" \
     "yes" "$(grep -q '^play_audio()' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Verify TEXT_FILE and STATUS_FILE paths are defined
-check "speak.sh defines TEXT_FILE path" \
-    "yes" "$(grep -q 'TEXT_FILE=.*speak11_text' "$SPEAK_SH" && echo "yes" || echo "no")"
-check "speak.sh defines STATUS_FILE path" \
-    "yes" "$(grep -q 'STATUS_FILE=.*speak11_status' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "just-aloud.sh defines TEXT_FILE path" \
+    "yes" "$(grep -q 'TEXT_FILE=.*just_aloud_text' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "just-aloud.sh defines STATUS_FILE path" \
+    "yes" "$(grep -q 'STATUS_FILE=.*just_aloud_status' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Verify TEXT_FILE is written after text acquisition
-check "speak.sh writes TEXT_FILE" \
+check "just-aloud.sh writes TEXT_FILE" \
     "yes" "$(grep -q 'printf.*TEXT.*TEXT_FILE\|> "$TEXT_FILE"\|>"$TEXT_FILE"' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Verify STATUS_FILE is written in play_audio (with afinfo duration)
@@ -820,7 +825,7 @@ check "play_audio writes STATUS_FILE with afinfo duration" \
 check "play_audio: writes offset and len to STATUS_FILE" \
     "yes" "$(awk '/^play_audio\(\)/,/^}/' "$SPEAK_SH" | grep -q '${1:-0}.*${2:-0}' && echo "yes" || echo "no")"
 
-# Functional test: run speak.sh with auto backend (cloud path) and verify files are created
+# Functional test: run just-aloud.sh with auto backend (cloud path) and verify files are created
 _STUBS=$(mktemp -d)
 _TESTTMP=$(mktemp -d)
 printf '#!/bin/bash\necho "fake-key"\n' > "$_STUBS/security"
@@ -846,21 +851,21 @@ printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
 chmod +x "$_STUBS"/*
 
 echo "Hello world. This is a test sentence." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto JUST_ALOUD_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 check "TEXT_FILE created with piped text" \
-    "Hello world. This is a test sentence." "$(cat "$_TESTTMP/speak11_text" 2>/dev/null)"
+    "Hello world. This is a test sentence." "$(cat "$_TESTTMP/just_aloud_text" 2>/dev/null)"
 
 check "STATUS_FILE created" \
-    "yes" "$([ -f "$_TESTTMP/speak11_status" ] && echo "yes" || echo "no")"
+    "yes" "$([ -f "$_TESTTMP/just_aloud_status" ] && echo "yes" || echo "no")"
 
 check "STATUS_FILE has four lines (epoch, duration, offset, len)" \
-    "4" "$([ -f "$_TESTTMP/speak11_status" ] && wc -l < "$_TESTTMP/speak11_status" | tr -d ' ' || echo "0")"
+    "4" "$([ -f "$_TESTTMP/just_aloud_status" ] && wc -l < "$_TESTTMP/just_aloud_status" | tr -d ' ' || echo "0")"
 
 # First line should be a recent epoch timestamp (within last 60 seconds)
 # Epoch may be fractional (e.g. 1741234567.890) — truncate to integer for arithmetic
-_STATUS_EPOCH=$(head -1 "$_TESTTMP/speak11_status" 2>/dev/null || echo "0")
+_STATUS_EPOCH=$(head -1 "$_TESTTMP/just_aloud_status" 2>/dev/null || echo "0")
 _STATUS_EPOCH=${_STATUS_EPOCH%%.*}
 _NOW_EPOCH=$(date +%s)
 _EPOCH_DIFF=$(( ${_NOW_EPOCH:-0} - ${_STATUS_EPOCH:-0} ))
@@ -869,11 +874,11 @@ check "STATUS_FILE epoch is recent (within 60s)" \
 
 # Second line should be the duration from afinfo stub
 check "STATUS_FILE contains audio duration" \
-    "5.000000" "$([ -f "$_TESTTMP/speak11_status" ] && sed -n '2p' "$_TESTTMP/speak11_status" || echo "none")"
+    "5.000000" "$([ -f "$_TESTTMP/just_aloud_status" ] && sed -n '2p' "$_TESTTMP/just_aloud_status" || echo "none")"
 
 rm -rf "$_STUBS" "$_TESTTMP"
 
-# Functional test: run speak.sh with local backend and verify files
+# Functional test: run just-aloud.sh with local backend and verify files
 _STUBS=$(mktemp -d)
 _TESTTMP=$(mktemp -d)
 printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"
@@ -888,7 +893,7 @@ cat > "$_STUBS/python3" << PYSTUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
 done
@@ -897,13 +902,13 @@ PYSTUB
 chmod +x "$_STUBS"/*
 
 echo "Local TTS test sentence." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart JUST_ALOUD_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 check "local backend: TEXT_FILE created" \
-    "Local TTS test sentence." "$(cat "$_TESTTMP/speak11_text" 2>/dev/null)"
+    "Local TTS test sentence." "$(cat "$_TESTTMP/just_aloud_text" 2>/dev/null)"
 check "local backend: STATUS_FILE created" \
-    "yes" "$([ -f "$_TESTTMP/speak11_status" ] && echo "yes" || echo "no")"
+    "yes" "$([ -f "$_TESTTMP/just_aloud_status" ] && echo "yes" || echo "no")"
 
 rm -rf "$_STUBS" "$_TESTTMP"
 
@@ -911,8 +916,8 @@ rm -rf "$_STUBS" "$_TESTTMP"
 
 section "TTS_BACKEND=auto routing"
 
-# Verify default changed in speak.sh
-check "speak.sh default backend is auto" \
+# Verify default changed in just-aloud.sh
+check "just-aloud.sh default backend is auto" \
     "yes" "$(grep -q 'TTS_BACKEND:-auto' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 _STUBS=$(mktemp -d)
@@ -945,7 +950,7 @@ cat > "$_STUBS/python3" << STUB
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
         touch "$_MARKERS/mlx_called"
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
     case "\$arg" in *tts_server.py) exit 1;; esac
@@ -956,7 +961,7 @@ chmod +x "$_STUBS"/*
 
 # Test: auto + API key → ElevenLabs
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "auto + API key → curl called (ElevenLabs)" \
     "yes" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "auto + API key → mlx_audio NOT called" \
@@ -966,7 +971,7 @@ check "auto + API key → mlx_audio NOT called" \
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
 printf '#!/bin/bash\nexit 1\n' > "$_STUBS/security"
 chmod +x "$_STUBS/security"
-bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
+bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"' >/dev/null 2>&1 || true
 check "auto + no API key → curl NOT called" \
     "no" "$([ -f "$_MARKERS/curl_called" ] && echo "yes" || echo "no")"
 check "auto + no API key → mlx_audio called (local)" \
@@ -975,7 +980,7 @@ check "auto + no API key → mlx_audio called (local)" \
 # Test: auto + no API key → exits 0 (no error dialog)
 rm -f "$_MARKERS/curl_called" "$_MARKERS/mlx_called"
 check_exit "auto + no API key → exits 0 (silent local)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto ELEVENLABS_API_KEY="" JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -1010,7 +1015,7 @@ cat > "$_STUBS/python3" << STUB
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
         touch "$_MARKERS/mlx_fallback_called"
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
     case "\$arg" in *tts_server.py) exit 1;; esac
@@ -1021,7 +1026,7 @@ chmod +x "$_STUBS"/*
 
 rm -f "$_MARKERS/mlx_fallback_called" "$_LOG"
 check_exit "auto + network failure → exits 0 (falls back)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto JUST_ALOUD_MUTE_CHECKED=1 JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "auto + network failure → local TTS called" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 check "auto + network failure → no dialog (silent)" \
@@ -1041,7 +1046,7 @@ CURLSTUB
 chmod +x "$_STUBS/curl"
 
 check_exit "auto + 429 → exits 0 (falls back)" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto SPEAK11_MUTE_CHECKED=1 SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=auto JUST_ALOUD_MUTE_CHECKED=1 JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 check "auto + 429 → local TTS called" \
     "yes" "$([ -f "$_MARKERS/mlx_fallback_called" ] && echo "yes" || echo "no")"
 
@@ -1051,8 +1056,8 @@ rm -rf "$_STUBS"
 
 section "Auto-derive lang_code from voice"
 
-# speak.sh derives lang_code from the voice prefix (first character)
-check "speak.sh derives lang_code from LOCAL_VOICE" \
+# just-aloud.sh derives lang_code from the voice prefix (first character)
+check "just-aloud.sh derives lang_code from LOCAL_VOICE" \
     "yes" "$(grep -q 'LOCAL_VOICE:0:1' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Functional test: verify the derived lang_code is passed to mlx_audio
@@ -1079,7 +1084,7 @@ for arg in "\$@"; do
             fi
             prev="\$a"
         done
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
 done
@@ -1088,14 +1093,14 @@ PYSTUB
 chmod +x "$_STUBS"/*
 
 # Test with American voice → should derive lang_code "a"
-echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 \
+echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart JUST_ALOUD_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 check "af_heart → lang_code 'a'" \
     "a" "$(cat "$_TESTTMP/captured_lang" 2>/dev/null)"
 
 # Test with British voice → should derive lang_code "b"
 rm -f "$_TESTTMP/captured_lang"
-echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=bf_emma SPEAK11_NO_QUEUE_PLAYER=1 \
+echo "test" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=bf_emma JUST_ALOUD_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 check "bf_emma → lang_code 'b'" \
     "b" "$(cat "$_TESTTMP/captured_lang" 2>/dev/null)"
@@ -1305,7 +1310,7 @@ check "uses softwareupdate --install to update CLT" \
 
 # Structural: uses xcrun swiftc (not bare swiftc) for compilation
 check "uses xcrun swiftc for compilation" \
-    "yes" "$(grep -q 'xcrun swiftc.*Speak11.swift' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'xcrun swiftc.*JustAloud.swift' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
 # Structural: logs errors to install.log instead of /dev/null
 check "swiftc stderr goes to log file" \
@@ -1442,10 +1447,10 @@ check "§3: admin password prompt has 'with prompt'" \
 
 # §4: Single-instance guard using mkdir lock
 check "§4: single-instance lock directory created" \
-    "yes" "$(grep -q 'mkdir.*\$_LOCKDIR\|mkdir.*speak11_install' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'mkdir.*\$_LOCKDIR\|mkdir.*just-aloud_install' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
 check "§4: lock directory cleaned up in cleanup/trap" \
-    "yes" "$(grep -q 'rm.*\$_LOCKDIR\|rm.*speak11_install' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'rm.*\$_LOCKDIR\|rm.*just-aloud_install' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
 check "§4: stale lock detected via PID check" \
     "yes" "$(grep -q 'kill -0.*holder\|cat.*lock.*pid' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
@@ -1532,11 +1537,11 @@ check "§14: uninstall.command copied to install dir" \
 
 # §16: Login item check before adding (no duplicates)
 check "§16: login item checked before adding" \
-    "yes" "$(grep -q 'login item.*Speak11\|every login item' "$SCRIPT_DIR/install.command" \
+    "yes" "$(grep -q 'login item.*Just Aloud\|every login item' "$SCRIPT_DIR/install.command" \
         && grep 'login item' "$SCRIPT_DIR/install.command" | grep -q 'get\|name of\|count\|exists' && echo "yes" || echo "no")"
 
 # §4 simulation: mkdir lock atomicity
-_LOCKDIR=$(mktemp -d)/speak11_install.lock
+_LOCKDIR=$(mktemp -d)/just-aloud_install.lock
 mkdir "$_LOCKDIR" 2>/dev/null
 echo "$$" > "$_LOCKDIR/pid"
 # Second attempt should fail
@@ -1711,7 +1716,7 @@ VENV_PY="$DEV_VENV/bin/python3"
 if [ "${1:-}" = "--fast" ] || [ ! -x "$VENV_PY" ]; then
     printf "  %s  %s\n" "SKIP" "local TTS: venv not installed or --fast mode"
 else
-    _TTS_TMPD=$(mktemp -d /tmp/speak11_test_tts_XXXXXXXXXX)
+    _TTS_TMPD=$(mktemp -d /tmp/just-aloud_test_tts_XXXXXXXXXX)
     _tts_ok="no"
     if (cd "$_TTS_TMPD" && "$VENV_PY" -m mlx_audio.tts.generate \
             --model mlx-community/Kokoro-82M-bf16 \
@@ -1719,13 +1724,13 @@ else
             --voice af_heart \
             --speed 1.00 \
             --lang_code a \
-            --file_prefix speak11 \
+            --file_prefix just-aloud \
             --audio_format wav \
-            --join_audio >/dev/null 2>&1) && [ -s "$_TTS_TMPD/speak11.wav" ]; then
+            --join_audio >/dev/null 2>&1) && [ -s "$_TTS_TMPD/just-aloud.wav" ]; then
         _tts_ok="yes"
     fi
     rm -rf "$_TTS_TMPD"
-    check "local TTS generates speak11.wav" "yes" "$_tts_ok"
+    check "local TTS generates just-aloud.wav" "yes" "$_tts_ok"
 
     # EspeakFallback must be active (phonemizer-fork + espeakng_loader).
     # Without it, out-of-vocabulary words like proper nouns are silently dropped.
@@ -1783,13 +1788,13 @@ check "tts_server.py: socket cleanup on shutdown" \
 check "tts_server.py: flock prevents multiple daemons" \
     "yes" "$(grep -q 'fcntl.flock' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-check "speak.sh: run_local_tts references daemon socket" \
+check "just-aloud.sh: run_local_tts references daemon socket" \
     "yes" "$(grep -q 'TTS_SOCK' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: daemon fallback to direct invocation" \
+check "just-aloud.sh: daemon fallback to direct invocation" \
     "yes" "$(grep -q 'falling back to direct invocation' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: start_tts_daemon function exists" \
+check "just-aloud.sh: start_tts_daemon function exists" \
     "yes" "$(grep -q 'start_tts_daemon' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "uninstall.command: kills TTS daemon" \
@@ -1804,8 +1809,8 @@ check "tts_server.py: parent watchdog for orphan detection" \
 check "tts_server.py: pipeline warmup" \
     "yes" "$(grep -q 'warmup_pipeline' "$TTS_SERVER" && echo "yes" || echo "no")"
 
-check "install.command: copies speak.sh" \
-    "yes" "$(grep -q 'cp -f.*speak.sh' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+check "install.command: copies just-aloud.sh" \
+    "yes" "$(grep -q 'cp -f.*just-aloud.sh' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
 check "install.command: copies tts_server.py" \
     "yes" "$(grep -q 'cp -f.*tts_server.py' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
@@ -1816,59 +1821,59 @@ check "install.command: copies install-local.sh" \
 check "install.command: no symlinks (uses cp not ln)" \
     "yes" "$(grep -q 'ln -s' "$SCRIPT_DIR/install.command" && echo "no" || echo "yes")"
 
-check "uninstall.command: removes tts_server.py" \
-    "yes" "$(grep -q 'tts_server.py' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
+check "uninstall.command: removes enhanced TTS server" \
+    "yes" "$(grep -q 'just-aloud-tts-server.py' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
 
-check "uninstall.command: removes install-local.sh" \
-    "yes" "$(grep -q 'install-local.sh' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
+check "uninstall.command: removes enhanced local installer" \
+    "yes" "$(grep -q 'just-aloud-install-local' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
 
-check "Speak11.swift: startTTSDaemon method" \
+check "JustAloud.swift: startTTSDaemon method" \
     "yes" "$(grep -q 'startTTSDaemon' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: stopTTSDaemon method" \
+check "JustAloud.swift: stopTTSDaemon method" \
     "yes" "$(grep -q 'stopTTSDaemon' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: applicationWillTerminate stops daemon" \
+check "JustAloud.swift: applicationWillTerminate stops daemon" \
     "yes" "$(grep -q 'applicationWillTerminate' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: applicationWillTerminate kills current process" \
+check "JustAloud.swift: applicationWillTerminate kills current process" \
     "yes" "$(awk '/applicationWillTerminate/,/^    }/' "$SETTINGS_SWIFT" | grep -q 'killCurrentProcess' && echo "yes" || echo "no")"
 
 # ── 35. Per-backend speed settings ──────────────────────────────
 section "Per-backend speed"
 
-check "speak.sh: LOCAL_SPEED variable defined" \
+check "just-aloud.sh: LOCAL_SPEED variable defined" \
     "yes" "$(grep -q 'LOCAL_SPEED=' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: LOCAL_SPEED env var saved before config sourcing" \
+check "just-aloud.sh: LOCAL_SPEED env var saved before config sourcing" \
     "yes" "$(grep -q '_ENV_LOCAL_SPEED=' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: LOCAL_SPEED restored with env var priority" \
+check "just-aloud.sh: LOCAL_SPEED restored with env var priority" \
     "yes" "$(grep -q '_ENV_LOCAL_SPEED:-' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: SPEED env var saved before config sourcing" \
+check "just-aloud.sh: SPEED env var saved before config sourcing" \
     "yes" "$(grep -q '_ENV_SPEED=' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: local TTS uses LOCAL_SPEED" \
+check "just-aloud.sh: local TTS uses LOCAL_SPEED" \
     "yes" "$(grep -q '_SPEED=\"\$LOCAL_SPEED\"' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # python3 check was removed (json_encode is pure bash; split_sentences has its own fallback)
-check "speak.sh: no hard exit for missing python3" \
+check "just-aloud.sh: no hard exit for missing python3" \
     "0" "$(grep -c 'command -v python3.*exit 1' "$SPEAK_SH" || true)"
 
-check "Speak11.swift: localSpeed config field" \
+check "JustAloud.swift: localSpeed config field" \
     "yes" "$(grep -q 'localSpeed' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: pickLocalSpeed handler" \
+check "JustAloud.swift: pickLocalSpeed handler" \
     "yes" "$(grep -q 'pickLocalSpeed' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: LOCAL_SPEED in config save" \
+check "JustAloud.swift: LOCAL_SPEED in config save" \
     "yes" "$(grep -q 'LOCAL_SPEED' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: default local voice is bf_lily" \
+check "JustAloud.swift: default local voice is bf_lily" \
     "yes" "$(grep -q 'bf_lily' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "speak.sh: default local voice is bf_lily" \
+check "just-aloud.sh: default local voice is bf_lily" \
     "yes" "$(grep -q 'bf_lily' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "install.command: default local voice is bf_lily" \
@@ -1936,17 +1941,17 @@ check "tts_server.py: client threads are daemon threads" \
 
 section "Orphaned temp dir cleanup"
 
-check "tts_server.py: cleans up speak11_tts_ temp dirs on startup" \
-    "yes" "$(grep -q 'speak11_tts_' "$TTS_SERVER" && grep -q 'shutil.rmtree' "$TTS_SERVER" && echo "yes" || echo "no")"
+check "tts_server.py: cleans up just_aloud_tts_ temp dirs on startup" \
+    "yes" "$(grep -q 'just_aloud_tts_' "$TTS_SERVER" && grep -q 'shutil.rmtree' "$TTS_SERVER" && echo "yes" || echo "no")"
 
 # ── 37. Unicode sanitization ────────────────────────────────────
 
 section "Unicode sanitization"
 
-check "speak.sh: sanitizes text with iconv before TTS" \
+check "just-aloud.sh: sanitizes text with iconv before TTS" \
     "yes" "$(grep -q 'iconv -f UTF-8 -t UTF-8//IGNORE' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: iconv runs after reading text, before save" \
+check "just-aloud.sh: iconv runs after reading text, before save" \
     "yes" "$(awk '/Strip invalid Unicode/,/Save text for live/' "$SPEAK_SH" | grep 'iconv' >/dev/null 2>&1 && echo "yes" || echo "no")"
 
 check "iconv: preserves normal ASCII" \
@@ -1971,36 +1976,36 @@ check "iconv: empty string passes through" \
 
 section "Mute check"
 
-check "speak.sh: checks mute status before TTS" \
+check "just-aloud.sh: checks mute status before TTS" \
     "yes" "$(grep -q 'output muted of (get volume settings)' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: mute dialog offers Unmute & Play" \
+check "just-aloud.sh: mute dialog offers Unmute & Play" \
     "yes" "$(grep -q 'Unmute & Play' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: unmutes system audio on confirmation" \
+check "just-aloud.sh: unmutes system audio on confirmation" \
     "yes" "$(grep -q 'set volume without output muted' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: mute check exits on Cancel" \
+check "just-aloud.sh: mute check exits on Cancel" \
     "yes" "$(awk '/MUTE_CHECKED/,/exit 0/' "$SPEAK_SH" | grep -q 'exit 0' && echo "yes" || echo "no")"
 
 # ── 39. Sentence-by-sentence generation ──────────────────────────
 
 section "Sentence-by-sentence generation"
 
-check "speak.sh: split_sentences function exists" \
+check "just-aloud.sh: split_sentences function exists" \
     "yes" "$(grep -q 'split_sentences()' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: split_sentences uses regex on sentence boundaries" \
+check "just-aloud.sh: split_sentences uses regex on sentence boundaries" \
     "yes" "$(grep -q 're.split' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: run_elevenlabs_tts function exists" \
+check "just-aloud.sh: run_elevenlabs_tts function exists" \
     "yes" "$(grep -q 'run_elevenlabs_tts()' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Pipeline loops parse offset/len from split_sentences and pass to play_audio
-check "speak.sh: local loop passes sentence offset to play_audio" \
+check "just-aloud.sh: local loop passes sentence offset to play_audio" \
     "yes" "$(awk '/TTS_BACKEND.*=.*local/,/^else/' "$SPEAK_SH" | grep -q 'play_audio.*_OFFSET.*_SENT_LEN' && echo "yes" || echo "no")"
 
-check "speak.sh: cloud loop passes sentence offset to play_audio" \
+check "just-aloud.sh: cloud loop passes sentence offset to play_audio" \
     "yes" "$(awk '/ElevenLabs.*cloud/,/^fi/' "$SPEAK_SH" | grep -q 'play_audio.*_OFFSET.*_SENT_LEN' && echo "yes" || echo "no")"
 
 # Functional tests for sentence splitting
@@ -2055,16 +2060,16 @@ check "split: no split mid-sentence" \
 
 section "PID and toggle mechanism"
 
-check "speak.sh: stores own PID in PID file" \
+check "just-aloud.sh: stores own PID in PID file" \
     "yes" "$(grep -q 'echo "\$\$" > "\$PID_FILE"' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: cleanup kills PLAY_PID" \
+check "just-aloud.sh: cleanup kills PLAY_PID" \
     "yes" "$(grep -q 'kill "\$PLAY_PID"' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: play_audio does NOT write to PID file" \
+check "just-aloud.sh: play_audio does NOT write to PID file" \
     "no" "$(awk '/^play_audio\(\)/,/^}/' "$SPEAK_SH" | grep -q 'PID_FILE' && echo "yes" || echo "no")"
 
-check "speak.sh: toggle reads PID file and kills process" \
+check "just-aloud.sh: toggle reads PID file and kills process" \
     "yes" "$(grep -q 'kill "\$OLD_PID"' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # ── 41. Audio pipeline (overlapping generation and playback) ──────
@@ -2213,7 +2218,7 @@ check "toggle force-kills (kill -9) as fallback" \
 check "toggle conditionally removes PID (checks OLD_PID)" \
     "yes" "$(awk '/pkill -P.*OLD_PID/,/exit 0/' "$SPEAK_SH" | grep -q 'cat "\$PID_FILE".*OLD_PID' && echo "yes" || echo "no")"
 
-# PID file stores $$ (speak.sh PID, not afplay PID)
+# PID file stores $$ (just-aloud.sh PID, not afplay PID)
 check "PID file stores \$\$ (shell PID)" \
     "yes" "$(grep -q 'echo "\$\$" > "\$PID_FILE"' "$SPEAK_SH" && echo "yes" || echo "no")"
 
@@ -2338,16 +2343,16 @@ check "split: colon kept in sentence" \
 check "split: two sentences split correctly" \
     "2" "$(echo "$(_run_split "Hello world. Goodbye world.")" | wc -l | tr -d ' ')"
 
-# Structural: speak.sh tries pySBD before regex fallback
-check "speak.sh: split_sentences tries pySBD" \
+# Structural: just-aloud.sh tries pySBD before regex fallback
+check "just-aloud.sh: split_sentences tries pySBD" \
     "yes" "$(grep -q 'import pysbd' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Structural: regex fallback does not split on colons/semicolons
-check "speak.sh: regex fallback has no colon/semicolon" \
+check "just-aloud.sh: regex fallback has no colon/semicolon" \
     "no" "$(awk '/^split_sentences/,/^}/' "$SPEAK_SH" | grep -qF '[.!?;:]' && echo "yes" || echo "no")"
 
 # Structural: regex fallback protects abbreviations
-check "speak.sh: regex fallback protects abbreviations" \
+check "just-aloud.sh: regex fallback protects abbreviations" \
     "yes" "$(awk '/^split_sentences/,/^}/' "$SPEAK_SH" | grep -q 'Mr|Mrs' && echo "yes" || echo "no")"
 
 # Functional: test the regex fallback explicitly (force pySBD import to fail)
@@ -2416,7 +2421,7 @@ for p in parts:
 " <<< "$1" 2>/dev/null
 }
 
-# Verify speak.sh split_sentences uses offset format
+# Verify just-aloud.sh split_sentences uses offset format
 check "split_sentences outputs offset format" \
     "yes" "$(grep -q "print(f'" "$SPEAK_SH" && grep -q 'idx.*len(p)' "$SPEAK_SH" && echo "yes" || echo "no")"
 
@@ -2562,16 +2567,16 @@ check "run_local_tts: fallback to direct mlx invocation" \
 
 section "Functional: toggle and rapid invocation"
 
-_TESTTMP=$(mktemp -d "${TMPDIR:-/tmp}/speak11_test_XXXXXXXXXX")
+_TESTTMP=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_test_XXXXXXXXXX")
 
 # Simulate toggle: PID file with running process → kills children + parent
 (
-    set +e  # match speak.sh behavior (no set -e)
-    # Start a background sleep to simulate speak.sh
+    set +e  # match just-aloud.sh behavior (no set -e)
+    # Start a background sleep to simulate just-aloud.sh
     sleep 30 &
     _SIM_PID=$!
 
-    _PID_FILE="$_TESTTMP/speak11_tts.pid"
+    _PID_FILE="$_TESTTMP/just_aloud_tts.pid"
     echo "$_SIM_PID" > "$_PID_FILE"
 
     # New invocation: read PID, kill children first, then parent
@@ -2595,7 +2600,7 @@ check "toggle kills previous process" \
 
 # Simulate stale PID (process not running) → clean up and proceed
 (
-    _PID_FILE="$_TESTTMP/speak11_tts2.pid"
+    _PID_FILE="$_TESTTMP/just_aloud_tts2.pid"
     echo "99999999" > "$_PID_FILE"  # PID that doesn't exist
     if [ -f "$_PID_FILE" ]; then
         OLD_PID=$(cat "$_PID_FILE" 2>/dev/null)
@@ -2612,8 +2617,8 @@ check "stale PID file: cleaned up, no kill sent" \
 
 # Rapid triple-invoke: B kills A (with pkill+wait), C sees no PID file
 (
-    set +e  # match speak.sh behavior (no set -e)
-    _PID_FILE="$_TESTTMP/speak11_tts3.pid"
+    set +e  # match just-aloud.sh behavior (no set -e)
+    _PID_FILE="$_TESTTMP/just_aloud_tts3.pid"
 
     # Instance A: starts running
     sleep 30 &
@@ -2649,7 +2654,7 @@ rm -rf "$_TESTTMP"
 
 section "Functional: cleanup on signal"
 
-_TESTTMP=$(mktemp -d "${TMPDIR:-/tmp}/speak11_test_XXXXXXXXXX")
+_TESTTMP=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_test_XXXXXXXXXX")
 
 # Simulate cleanup behavior: SIGTERM kills PLAY_PID and removes files
 (
@@ -2708,7 +2713,7 @@ rm -rf "$_TESTTMP"
 
 section "Functional: pipeline overlap simulation"
 
-_TESTTMP=$(mktemp -d "${TMPDIR:-/tmp}/speak11_test_XXXXXXXXXX")
+_TESTTMP=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_test_XXXXXXXXXX")
 
 # Simulate pipeline: generate, play, generate overlapping, wait, play
 (
@@ -2806,13 +2811,13 @@ check "daemon: error response sent to client on failure" \
 
 section "Simulation: local pipeline with fake TTS"
 
-_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_sim_XXXXXXXXXX")
 _SIM_LOG="$_SIMDIR/play.log"
 _SIM_STATUS="$_SIMDIR/status"
 _SIM_PIDFILE="$_SIMDIR/tts.pid"
 
 # Create a fake TTS driver script that uses the actual pipeline logic from
-# speak.sh but replaces afplay/daemon with stubs that log what they do.
+# just-aloud.sh but replaces afplay/daemon with stubs that log what they do.
 cat > "$_SIMDIR/sim_local.sh" << 'SIMEOF'
 #!/bin/bash
 # Simulation: runs the local pipeline with fake TTS and fake afplay.
@@ -2864,8 +2869,8 @@ for p in parts:
 # Fake run_local_tts: creates a WAV file (just text content for verification)
 run_local_tts() {
     _GEN_COUNT=$((_GEN_COUNT + 1))
-    TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_gen_XXXXXXXXXX")
-    TMP_FILE="$TMP_DIR/speak11.wav"
+    TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_sim_gen_XXXXXXXXXX")
+    TMP_FILE="$TMP_DIR/just-aloud.wav"
     printf '%s' "$TEXT" > "$TMP_FILE"
     # Simulate generation time (10ms)
     sleep 0.01
@@ -2894,7 +2899,7 @@ wait_audio() {
     fi
 }
 
-# ── Run the pipeline (mirrors speak.sh local loop) ──
+# ── Run the pipeline (mirrors just-aloud.sh local loop) ──
 _SENTENCES=$(split_sentences "$TEXT")
 
 _SAVED_TEXT="$TEXT"
@@ -2978,7 +2983,7 @@ rm -rf "$_SIMDIR"
 
 section "Simulation: cloud pipeline with fake curl"
 
-_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_sim_XXXXXXXXXX")
 _SIM_LOG="$_SIMDIR/play.log"
 
 # Create a fake cloud TTS driver
@@ -3027,7 +3032,7 @@ for p in parts:
 
 run_elevenlabs_tts() {
     local sentence="$1"
-    TMP_FILE=$(mktemp "${TMPDIR:-/tmp}/speak11_sim_tts_XXXXXXXXXX")
+    TMP_FILE=$(mktemp "${TMPDIR:-/tmp}/just-aloud_sim_tts_XXXXXXXXXX")
     printf '%s' "$sentence" > "$TMP_FILE"
     sleep 0.01
     HTTP_CODE="200"
@@ -3097,7 +3102,7 @@ rm -rf "$_SIMDIR"
 #   - Interrupting stops further generation (saves credits / GPU time)
 #   - At most played + 1 generations occur (the pre-fetched lookahead)
 #
-# The simulation uses separate traps matching speak.sh:
+# The simulation uses separate traps matching just-aloud.sh:
 #   trap cleanup EXIT          — cleanup on any exit
 #   trap 'exit 143' TERM      — SIGTERM causes immediate exit (cleanup via EXIT)
 #   trap 'exit 130' INT       — SIGINT  causes immediate exit
@@ -3157,8 +3162,8 @@ for p in parts:
 
 run_tts() {
     echo "GEN:\$1" >> "\$_GEN_LOG"
-    TMP_DIR=\$(mktemp -d "\${TMPDIR:-/tmp}/speak11_sim_gen_XXXXXXXXXX")
-    TMP_FILE="\$TMP_DIR/speak11.wav"
+    TMP_DIR=\$(mktemp -d "\${TMPDIR:-/tmp}/just-aloud_sim_gen_XXXXXXXXXX")
+    TMP_FILE="\$TMP_DIR/just-aloud.wav"
     printf '%s' "\$1" > "\$TMP_FILE"
     sleep 0.01
     [ -s "\$TMP_FILE" ]
@@ -3246,7 +3251,7 @@ _run_interrupt_test() {
     _PLAY_COUNT=$(grep -c '^PLAY:' "$simdir/play.log" 2>/dev/null || echo 0)
 }
 
-_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_sim_XXXXXXXXXX")
 
 # ── Cloud (ElevenLabs): per-sentence API calls ──
 
@@ -3344,7 +3349,7 @@ unset -f _make_pipeline_sim _run_interrupt_test
 
 section "Regression: combined trap bug"
 
-_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_sim_XXXXXXXXXX")
 
 # Script with BROKEN trap pattern (combined)
 cat > "$_SIMDIR/broken_trap.sh" << 'SIMEOF'
@@ -3425,7 +3430,7 @@ rm -rf "$_SIMDIR"
 
 section "Regression: cleanup idempotency"
 
-_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_sim_XXXXXXXXXX")
 
 (
     set +e
@@ -3443,7 +3448,7 @@ _SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
     mkdir -p "$TMP_DIR" "$_PREV_TMP_DIR"
     echo "$$" > "$PID_FILE"
 
-    # Define cleanup matching speak.sh
+    # Define cleanup matching just-aloud.sh
     cleanup() {
         set +e
         [ -n "$_CURL_PID" ] && kill "$_CURL_PID" 2>/dev/null
@@ -3502,13 +3507,13 @@ chmod +x "$_STUBS"/*
 
 # 3 sentences: "Alpha. Beta. Gamma." → offsets 0, 7, 13
 echo "Alpha. Beta. Gamma." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto JUST_ALOUD_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
 # STATUS_FILE should contain the LAST sentence's offset and length.
 # "Gamma." starts at offset 13, length 6.
-_STATUS_OFFSET=$(sed -n '3p' "$_TESTTMP/speak11_status" 2>/dev/null)
-_STATUS_LEN=$(sed -n '4p' "$_TESTTMP/speak11_status" 2>/dev/null)
+_STATUS_OFFSET=$(sed -n '3p' "$_TESTTMP/just_aloud_status" 2>/dev/null)
+_STATUS_LEN=$(sed -n '4p' "$_TESTTMP/just_aloud_status" 2>/dev/null)
 
 check "STATUS_FILE offset is last sentence (13, not 0)" \
     "13" "$_STATUS_OFFSET"
@@ -3538,10 +3543,10 @@ cat > "$_STUBS/python3" << 'PYSTUB'
 for arg in "$@"; do
     # Fake TTS: create minimal WAV file
     if [ "$arg" = "mlx_audio.tts.generate" ]; then
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
-    # Daemon: exit non-zero so speak.sh falls back to direct invocation
+    # Daemon: exit non-zero so just-aloud.sh falls back to direct invocation
     case "$arg" in *tts_server.py) exit 1 ;; esac
 done
 # Pass through to real python3 for split_sentences, normalize_text etc.
@@ -3550,11 +3555,11 @@ PYSTUB
 chmod +x "$_STUBS"/*
 
 echo "Alpha. Beta. Gamma." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart JUST_ALOUD_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
-_STATUS_OFFSET=$(sed -n '3p' "$_TESTTMP/speak11_status" 2>/dev/null)
-_STATUS_LEN=$(sed -n '4p' "$_TESTTMP/speak11_status" 2>/dev/null)
+_STATUS_OFFSET=$(sed -n '3p' "$_TESTTMP/just_aloud_status" 2>/dev/null)
+_STATUS_LEN=$(sed -n '4p' "$_TESTTMP/just_aloud_status" 2>/dev/null)
 
 check "local: STATUS_FILE offset is last sentence (13)" \
     "13" "$_STATUS_OFFSET"
@@ -3570,7 +3575,7 @@ section "Simulation: toggle kills all processes"
 
 # Run the entire toggle simulation in a separate bash process to isolate
 # signal handling and job control from the test runner.
-_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_sim_XXXXXXXXXX")
 
 bash -c '
 set +e
@@ -3645,7 +3650,7 @@ rm -rf "$_SIMDIR"
 
 section "Simulation: no overlapping voices on rapid re-invoke"
 
-_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/speak11_sim_XXXXXXXXXX")
+_SIMDIR=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud_sim_XXXXXXXXXX")
 
 bash -c '
 set +e
@@ -3725,7 +3730,7 @@ rm -rf "$_SIMDIR"
 section "429 + install-local fallback exit code"
 
 # When ElevenLabs returns 429, user installs local TTS, and local TTS
-# succeeds, speak.sh should exit 0 (not fall through to exit 1).
+# succeeds, just-aloud.sh should exit 0 (not fall through to exit 1).
 _STUBS=$(mktemp -d)
 _LOG="$_STUBS/osascript.log"
 
@@ -3774,7 +3779,7 @@ cat > "$_STUBS/python3" << STUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
     case "\$arg" in *tts_server.py) exit 1;; esac
@@ -3784,7 +3789,7 @@ STUB
 chmod +x "$_STUBS"/*
 
 check_exit "429 + install-local + local TTS succeeds → exits 0" 0 \
-    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs SPEAK11_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
+    bash -c 'echo "hello" | env PATH="'"$_STUBS"':$PATH" VENV_PYTHON="'"$_STUBS"'/python3" TTS_BACKEND=elevenlabs TTS_BACKENDS_INSTALLED=elevenlabs JUST_ALOUD_NO_QUEUE_PLAYER=1 bash "'"$SPEAK_SH"'"'
 
 rm -rf "$_STUBS"
 
@@ -3792,13 +3797,13 @@ rm -rf "$_STUBS"
 
 section "Empty text check (no O(n^2) bash substitution)"
 
-# speak.sh must NOT use ${TEXT//[[:space:]]/} which is O(n^2) in bash 3.2
+# just-aloud.sh must NOT use ${TEXT//[[:space:]]/} which is O(n^2) in bash 3.2
 # for large texts.  Use [[ =~ ]] instead.  (A comment mentioning the pattern is OK.)
-check "speak.sh: no \${TEXT//[[:space:]]/} pattern in code" \
+check "just-aloud.sh: no \${TEXT//[[:space:]]/} pattern in code" \
     "0" "$(grep -v '^ *#' "$SPEAK_SH" | grep -c 'TEXT//\[' || true)"
 
-# speak.sh uses [[ =~ ]] regex match (builtin, no fork, short-circuits)
-check "speak.sh: uses [[ =~ ]] for whitespace check" \
+# just-aloud.sh uses [[ =~ ]] regex match (builtin, no fork, short-circuits)
+check "just-aloud.sh: uses [[ =~ ]] for whitespace check" \
     "yes" "$(grep -q '\[\[ "\$TEXT" =~ \[^' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Functional: large text (6KB) with pipe completes in under 5 seconds
@@ -3812,7 +3817,7 @@ cat > "$_STUBS/python3" << PYSTUB
 #!/bin/bash
 for arg in "\$@"; do
     if [ "\$arg" = "mlx_audio.tts.generate" ]; then
-        printf "RIFF" > "speak11.wav"
+        printf "RIFF" > "just-aloud.wav"
         exit 0
     fi
     case "\$arg" in *tts_server.py) exit 1;; esac
@@ -3829,7 +3834,7 @@ done
 
 _T0=$(date +%s)
 printf '%s' "$_BIGTEXT" | env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" \
-    TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart SPEAK11_NO_QUEUE_PLAYER=1 \
+    TMPDIR="$_TESTTMP" TTS_BACKEND=local LOCAL_VOICE=af_heart JUST_ALOUD_NO_QUEUE_PLAYER=1 \
     timeout 5 /bin/bash "$SPEAK_SH" >/dev/null 2>&1 || true
 _T1=$(date +%s)
 _ELAPSED=$(( ${_T1:-0} - ${_T0:-0} ))
@@ -3844,7 +3849,7 @@ rm -rf "$_STUBS" "$_TESTTMP"
 section "STATUS_FILE fractional epoch"
 
 # STATUS_FILE epoch must be fractional (from _BASE_EPOCH which is set with perl Time::HiRes)
-check "speak.sh: _BASE_EPOCH set with perl Time::HiRes" \
+check "just-aloud.sh: _BASE_EPOCH set with perl Time::HiRes" \
     "yes" "$(grep -q '_BASE_EPOCH=.*perl.*Time::HiRes' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Functional: STATUS_FILE first line has decimal point
@@ -3867,10 +3872,10 @@ printf '#!/bin/bash\n/usr/bin/python3 "$@"\n' > "$_STUBS/python3"
 chmod +x "$_STUBS"/*
 
 echo "Hello world." | \
-    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto SPEAK11_NO_QUEUE_PLAYER=1 \
+    env PATH="$_STUBS:$PATH" VENV_PYTHON="$_STUBS/python3" TMPDIR="$_TESTTMP" TTS_BACKEND=auto JUST_ALOUD_NO_QUEUE_PLAYER=1 \
     bash "$SPEAK_SH" >/dev/null 2>&1 || true
 
-_STATUS_EPOCH=$(head -1 "$_TESTTMP/speak11_status" 2>/dev/null || echo "0")
+_STATUS_EPOCH=$(head -1 "$_TESTTMP/just_aloud_status" 2>/dev/null || echo "0")
 check "STATUS_FILE epoch has fractional part" \
     "yes" "$(echo "$_STATUS_EPOCH" | grep -q '\.' && echo "yes" || echo "no (got: $_STATUS_EPOCH)")"
 
@@ -3914,16 +3919,16 @@ check "handle_client: clear_cache after response" \
 
 section "Bash JSON encoding (no Python fork per sentence)"
 
-# speak.sh must define a json_encode function (pure bash, no fork)
-check "speak.sh: json_encode function defined" \
+# just-aloud.sh must define a json_encode function (pure bash, no fork)
+check "just-aloud.sh: json_encode function defined" \
     "yes" "$(grep -q '^json_encode()' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # run_elevenlabs_tts must NOT fork python3 for JSON encoding
-check "speak.sh: run_elevenlabs_tts uses json_encode (no python3 -c json)" \
+check "just-aloud.sh: run_elevenlabs_tts uses json_encode (no python3 -c json)" \
     "0" "$(sed -n '/^run_elevenlabs_tts() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -c 'python3 -c.*json' || true)"
 
 # json_encode must handle quotes, backslashes, newlines, tabs
-# Source the function from speak.sh (it's pure bash, safe to source this snippet)
+# Source the function from just-aloud.sh (it's pure bash, safe to source this snippet)
 eval "$(awk '/^json_encode\(\)/,/^}/' "$SPEAK_SH")" 2>/dev/null || true
 
 if type json_encode &>/dev/null; then
@@ -3967,15 +3972,15 @@ section "Daemon request via Unix socket"
 _TDR_BODY=$(sed -n '/^tts_daemon_request() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH")
 
 # Must use python socket (nc -U on macOS drops responses from Unix sockets)
-check "speak.sh: tts_daemon_request uses python socket" \
+check "just-aloud.sh: tts_daemon_request uses python socket" \
     "yes" "$(echo "$_TDR_BODY" | grep -q 'socket.AF_UNIX\|SOCK_STREAM' && echo "yes" || echo "no")"
 
 # JSON request built with json_encode (bash, no extra fork)
-check "speak.sh: tts_daemon_request uses json_encode for request" \
+check "just-aloud.sh: tts_daemon_request uses json_encode for request" \
     "yes" "$(echo "$_TDR_BODY" | grep -q 'json_encode' && echo "yes" || echo "no")"
 
 # Response parsing uses bash string ops
-check "speak.sh: tts_daemon_request parses response without jq" \
+check "just-aloud.sh: tts_daemon_request parses response without jq" \
     "yes" "$(echo "$_TDR_BODY" | grep -q 'audio_file.*%%\|audio_file.*##' && echo "yes" || echo "no")"
 
 # ── 58. WAV duration without afinfo (local mode) ─────────────────
@@ -3984,11 +3989,11 @@ section "WAV duration without afinfo (local mode)"
 
 # play_audio should compute duration from WAV header for local files
 # instead of forking afinfo + awk
-check "speak.sh: play_audio uses stat for WAV duration" \
+check "just-aloud.sh: play_audio uses stat for WAV duration" \
     "yes" "$(sed -n '/^play_audio() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -q 'wav_duration\|stat -f' && echo "yes" || echo "no")"
 
 # Functional: create a real WAV file and verify duration calculation
-_WAV_TMP=$(mktemp "${TMPDIR:-/tmp/}speak11_test_XXXXXXXXXX.wav")
+_WAV_TMP=$(mktemp "${TMPDIR:-/tmp/}just-aloud_test_XXXXXXXXXX.wav")
 # Create a minimal WAV file: 24kHz, 16-bit, mono, 2.4 seconds = 115200 samples
 # Header: 44 bytes + data: 230400 bytes (115200 samples * 2 bytes) = 230444 total
 python3 -c "
@@ -4019,11 +4024,11 @@ rm -f "$_WAV_TMP"
 section "Toggle: tighter kill-wait loop"
 
 # The kill-wait loop should use sleep 0.05 (not 0.1) for faster toggle response
-check "speak.sh: kill-wait uses sleep 0.05" \
+check "just-aloud.sh: kill-wait uses sleep 0.05" \
     "yes" "$(grep -q 'sleep 0.05' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Loop should check more times (10 iterations at 0.05s = 500ms budget)
-check "speak.sh: kill-wait has 10 iterations" \
+check "just-aloud.sh: kill-wait has 10 iterations" \
     "yes" "$(grep -q 'for _i in 1 2 3 4 5 6 7 8 9 10' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # ── 60. Zero-fork epoch in play_audio ─────────────────────────────
@@ -4031,15 +4036,15 @@ check "speak.sh: kill-wait has 10 iterations" \
 section "Zero-fork epoch in play_audio (no per-sentence perl)"
 
 # play_audio must NOT fork perl on every call — use cached epoch + $SECONDS
-check "speak.sh: no perl fork in play_audio" \
+check "just-aloud.sh: no perl fork in play_audio" \
     "0" "$(sed -n '/^play_audio() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -c 'perl' || true)"
 
 # _BASE_EPOCH must be computed once before the pipeline loop
-check "speak.sh: _BASE_EPOCH set before pipeline" \
+check "just-aloud.sh: _BASE_EPOCH set before pipeline" \
     "yes" "$(grep -q '_BASE_EPOCH=' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # play_audio should use SECONDS-based epoch (no fork)
-check "speak.sh: play_audio uses SECONDS-based epoch" \
+check "just-aloud.sh: play_audio uses SECONDS-based epoch" \
     "yes" "$(sed -n '/^play_audio() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -q 'SECONDS\|_BASE_EPOCH' && echo "yes" || echo "no")"
 
 # ── 61. Zero-fork wav_duration ───────────────────────────────────
@@ -4047,12 +4052,12 @@ check "speak.sh: play_audio uses SECONDS-based epoch" \
 section "Zero-fork wav_duration (bash arithmetic, no bc)"
 
 # wav_duration must NOT fork bc — use bash $(( )) arithmetic
-check "speak.sh: wav_duration uses bash arithmetic (no bc)" \
+check "just-aloud.sh: wav_duration uses bash arithmetic (no bc)" \
     "0" "$(sed -n '/^wav_duration() *{/,/^}/p' "$SPEAK_SH" | grep -c '| *bc' || true)"
 
 # Functional: verify wav_duration still calculates correct duration
 eval "$(sed -n '/^wav_duration() *{/,/^}/p' "$SPEAK_SH")" 2>/dev/null || true
-_WAV_TMP=$(mktemp "${TMPDIR:-/tmp/}speak11_test_XXXXXXXXXX.wav")
+_WAV_TMP=$(mktemp "${TMPDIR:-/tmp/}just-aloud_test_XXXXXXXXXX.wav")
 python3 -c "
 import struct, sys
 sr = 24000; ch = 1; bps = 16; n = 115200  # 4.8 seconds
@@ -4081,7 +4086,7 @@ rm -f "$_WAV_TMP"
 section "Respeak: position-aware resumption (end-to-end simulation)"
 
 # Simulate the full respeak pipeline:
-# 1. speak.sh writes STATUS_FILE with per-sentence offset/len
+# 1. just-aloud.sh writes STATUS_FILE with per-sentence offset/len
 # 2. Swift reads STATUS_FILE + TEXT_FILE, computes remaining text
 # 3. Remaining text should start at roughly the correct sentence
 
@@ -4181,76 +4186,76 @@ rm -rf "$_RESP_TMP"
 
 section "Fast mute check (CoreAudio CLI tool)"
 
-_AUDIO_SWIFT="$SCRIPT_DIR/speak11-audio.swift"
+_AUDIO_SWIFT="$SCRIPT_DIR/just-aloud-audio.swift"
 
-check "speak11-audio.swift exists" \
+check "just-aloud-audio.swift exists" \
     "yes" "$([ -f "$_AUDIO_SWIFT" ] && echo "yes" || echo "no")"
 
-check "speak11-audio.swift imports CoreAudio" \
+check "just-aloud-audio.swift imports CoreAudio" \
     "yes" "$(grep -q 'import CoreAudio' "$_AUDIO_SWIFT" 2>/dev/null && echo "yes" || echo "no")"
 
-check "speak11-audio.swift uses kAudioDevicePropertyMute" \
+check "just-aloud-audio.swift uses kAudioDevicePropertyMute" \
     "yes" "$(grep -q 'kAudioDevicePropertyMute' "$_AUDIO_SWIFT" 2>/dev/null && echo "yes" || echo "no")"
 
-check "speak11-audio.swift handles is-muted subcommand" \
+check "just-aloud-audio.swift handles is-muted subcommand" \
     "yes" "$(grep -q 'is-muted' "$_AUDIO_SWIFT" 2>/dev/null && echo "yes" || echo "no")"
 
-check "speak11-audio.swift handles unmute subcommand" \
+check "just-aloud-audio.swift handles unmute subcommand" \
     "yes" "$(grep -q '"unmute"' "$_AUDIO_SWIFT" 2>/dev/null && echo "yes" || echo "no")"
 
-check "speak.sh: mute check uses speak11-audio" \
-    "yes" "$(grep -q 'speak11-audio' "$SPEAK_SH" && grep -q '_AUDIO_TOOL.*is-muted' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "just-aloud.sh: mute check uses just-aloud-audio" \
+    "yes" "$(grep -q 'just-aloud-audio' "$SPEAK_SH" && grep -q '_AUDIO_TOOL.*is-muted' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: unmute uses speak11-audio" \
-    "yes" "$(grep -q 'speak11-audio' "$SPEAK_SH" && grep -q '_AUDIO_TOOL.*unmute' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "just-aloud.sh: unmute uses just-aloud-audio" \
+    "yes" "$(grep -q 'just-aloud-audio' "$SPEAK_SH" && grep -q '_AUDIO_TOOL.*unmute' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: osascript mute fallback for missing binary" \
+check "just-aloud.sh: osascript mute fallback for missing binary" \
     "yes" "$(grep -q 'output muted of (get volume settings)' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "install.command: compiles speak11-audio.swift" \
-    "yes" "$(grep -q 'speak11-audio.swift' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
+check "install.command: compiles just-aloud-audio.swift" \
+    "yes" "$(grep -q 'just-aloud-audio.swift' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
 
-# In-process mute check in Speak11.swift (no fork when launched from app)
-check "Speak11.swift: imports CoreAudio" \
-    "yes" "$(grep -q 'import CoreAudio' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+# In-process mute check in JustAloud.swift (no fork when launched from app)
+check "JustAloud.swift: imports CoreAudio" \
+    "yes" "$(grep -q 'import CoreAudio' "$SCRIPT_DIR/JustAloud.swift" && echo "yes" || echo "no")"
 
-check "Speak11.swift: has isOutputMuted function" \
-    "yes" "$(grep -q 'func isOutputMuted' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+check "JustAloud.swift: has isOutputMuted function" \
+    "yes" "$(grep -q 'func isOutputMuted' "$SCRIPT_DIR/JustAloud.swift" && echo "yes" || echo "no")"
 
-check "Speak11.swift: has unmuteOutput function" \
-    "yes" "$(grep -q 'func unmuteOutput' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+check "JustAloud.swift: has unmuteOutput function" \
+    "yes" "$(grep -q 'func unmuteOutput' "$SCRIPT_DIR/JustAloud.swift" && echo "yes" || echo "no")"
 
-check "Speak11.swift: checks mute in runSpeak" \
-    "yes" "$(grep -q 'isOutputMuted' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+check "JustAloud.swift: checks mute in runSpeak" \
+    "yes" "$(grep -q 'isOutputMuted' "$SCRIPT_DIR/JustAloud.swift" && echo "yes" || echo "no")"
 
-check "Speak11.swift: passes SPEAK11_MUTE_CHECKED to speak.sh" \
-    "yes" "$(grep -q 'SPEAK11_MUTE_CHECKED' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+check "JustAloud.swift: passes JUST_ALOUD_MUTE_CHECKED to just-aloud.sh" \
+    "yes" "$(grep -q 'JUST_ALOUD_MUTE_CHECKED' "$SCRIPT_DIR/JustAloud.swift" && echo "yes" || echo "no")"
 
-check "speak.sh: skips mute check when SPEAK11_MUTE_CHECKED=1" \
-    "yes" "$(grep -q 'SPEAK11_MUTE_CHECKED' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "just-aloud.sh: skips mute check when JUST_ALOUD_MUTE_CHECKED=1" \
+    "yes" "$(grep -q 'JUST_ALOUD_MUTE_CHECKED' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Cmd+V paste support: dialogs with text fields must use .regular activation policy
-check "Speak11.swift: API key dialog enables paste (regular activation)" \
-    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
+check "JustAloud.swift: API key dialog enables paste (regular activation)" \
+    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/JustAloud.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
 
-check "Speak11.swift: custom voice dialog enables paste (regular activation)" \
-    "yes" "$(awk '/func customVoice/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
+check "JustAloud.swift: custom voice dialog enables paste (regular activation)" \
+    "yes" "$(awk '/func customVoice/,/^    }/' "$SCRIPT_DIR/JustAloud.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
 
-check "Speak11.swift: dialogs restore accessory policy via defer" \
-    "yes" "$(grep -c 'defer.*setActivationPolicy(.accessory)' "$SCRIPT_DIR/Speak11.swift" | awk '{print ($1 >= 2) ? "yes" : "no"}')"
+check "JustAloud.swift: dialogs restore accessory policy via defer" \
+    "yes" "$(grep -c 'defer.*setActivationPolicy(.accessory)' "$SCRIPT_DIR/JustAloud.swift" | awk '{print ($1 >= 2) ? "yes" : "no"}')"
 
 # API key validation
-check "Speak11.swift: validateAPIKey function exists" \
-    "yes" "$(grep -q 'func validateAPIKey' "$SCRIPT_DIR/Speak11.swift" && echo "yes" || echo "no")"
+check "JustAloud.swift: validateAPIKey function exists" \
+    "yes" "$(grep -q 'func validateAPIKey' "$SCRIPT_DIR/JustAloud.swift" && echo "yes" || echo "no")"
 
-check "Speak11.swift: validates key via /v1/user/subscription" \
-    "yes" "$(awk '/func validateAPIKey/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'v1/user/subscription' && echo "yes" || echo "no")"
+check "JustAloud.swift: validates key via /v1/user/subscription" \
+    "yes" "$(awk '/func validateAPIKey/,/^    }/' "$SCRIPT_DIR/JustAloud.swift" | grep -q 'v1/user/subscription' && echo "yes" || echo "no")"
 
-check "Speak11.swift: showAPIKeyDialog calls validateAPIKey" \
-    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'validateAPIKey' && echo "yes" || echo "no")"
+check "JustAloud.swift: showAPIKeyDialog calls validateAPIKey" \
+    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/JustAloud.swift" | grep -q 'validateAPIKey' && echo "yes" || echo "no")"
 
-check "Speak11.swift: showAPIKeyDialog loops on validation failure" \
-    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/Speak11.swift" | grep -q 'while true' && echo "yes" || echo "no")"
+check "JustAloud.swift: showAPIKeyDialog loops on validation failure" \
+    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/JustAloud.swift" | grep -q 'while true' && echo "yes" || echo "no")"
 
 check "install.command: validate_api_key function exists" \
     "yes" "$(grep -q '^validate_api_key()' "$SCRIPT_DIR/install.command" && echo "yes" || echo "no")"
@@ -4263,7 +4268,7 @@ check "install.command: prompt_api_key loops on failure" \
 
 # ── Audio queue player ────────────────────────────────────────────
 
-section "Audio queue player (speak11-audio play-queue)"
+section "Audio queue player (just-aloud-audio play-queue)"
 
 # Shell-portable timeout: run command in background, kill after N seconds.
 # Usage: _run_with_timeout SECONDS command [args...]
@@ -4271,7 +4276,7 @@ section "Audio queue player (speak11-audio play-queue)"
 _run_with_timeout() {
     local _secs="$1"; shift
     local _tout_file
-    _tout_file=$(mktemp "${TMPDIR:-/tmp}/speak11_tout_XXXXXXXXXX")
+    _tout_file=$(mktemp "${TMPDIR:-/tmp}/just-aloud_tout_XXXXXXXXXX")
     "$@" > "$_tout_file" 2>/dev/null &
     local _bg=$!
     ( sleep "$_secs"; kill "$_bg" 2>/dev/null ) &
@@ -4284,7 +4289,7 @@ _run_with_timeout() {
 }
 
 # Generate a tiny test WAV (~50ms, 24kHz mono 16-bit) for fast tests.
-_TEST_WAV="${TMPDIR:-/tmp}/speak11_test_$$.wav"
+_TEST_WAV="${TMPDIR:-/tmp}/just-aloud_test_$$.wav"
 python3 -c "
 import wave, struct, math
 with wave.open('$_TEST_WAV', 'w') as f:
@@ -4293,20 +4298,20 @@ with wave.open('$_TEST_WAV', 'w') as f:
     f.writeframes(b''.join(struct.pack('<h', int(16000 * math.sin(2*math.pi*440*i/24000))) for i in range(n)))
 " 2>/dev/null
 
-# Compile speak11-audio (reuse for queue player tests)
-_QP_BIN="${TMPDIR:-/tmp}/speak11_audio_test_$$"
+# Compile just-aloud-audio (reuse for queue player tests)
+_QP_BIN="${TMPDIR:-/tmp}/just_aloud_audio_test_$$"
 _QP_COMPILED=false
 if ! $FAST; then
-    if xcrun swiftc "$SCRIPT_DIR/speak11-audio.swift" -o "$_QP_BIN" -O 2>/dev/null; then
+    if xcrun swiftc "$SCRIPT_DIR/just-aloud-audio.swift" -o "$_QP_BIN" -O 2>/dev/null; then
         _QP_COMPILED=true
-        check "speak11-audio compiles with play-queue support" "true" "$_QP_COMPILED"
+        check "just-aloud-audio compiles with play-queue support" "true" "$_QP_COMPILED"
     else
-        check "speak11-audio compiles with play-queue support" "true" "false"
+        check "just-aloud-audio compiles with play-queue support" "true" "false"
     fi
 else
     # Fast mode: use pre-compiled binary if available
-    if [ -x "$HOME/.local/bin/speak11-audio" ]; then
-        _QP_BIN="$HOME/.local/bin/speak11-audio"
+    if [ -x "$HOME/.local/bin/just-aloud-audio" ]; then
+        _QP_BIN="$HOME/.local/bin/just-aloud-audio"
         _QP_COMPILED=true
     fi
 fi
@@ -4315,14 +4320,14 @@ if $_QP_COMPILED; then
     # Existing commands still work
     _mute_exit=0
     "$_QP_BIN" is-muted >/dev/null 2>&1 || _mute_exit=$?
-    check "speak11-audio: is-muted exits 0 or 1" \
+    check "just-aloud-audio: is-muted exits 0 or 1" \
         "yes" "$([ $_mute_exit -eq 0 ] || [ $_mute_exit -eq 1 ] && echo "yes" || echo "no")"
 
-    check "speak11-audio: unknown command exits 2" \
+    check "just-aloud-audio: unknown command exits 2" \
         "2" "$("$_QP_BIN" bogus 2>/dev/null; echo $?)"
 
     # play-queue: single file → outputs duration then DONE
-    _QP_STATUS="${TMPDIR:-/tmp}/speak11_qpstatus_$$"
+    _QP_STATUS="${TMPDIR:-/tmp}/just-aloud_qpstatus_$$"
     _run_with_timeout 5 bash -c \
         "printf '%s\t%s\t%s\t%s\t%s\n' \"$_TEST_WAV\" '1700000000.000' '0' '100' \"$_QP_STATUS\" | \"$_QP_BIN\" play-queue"
     _QP_LINE1=$(echo "$_TIMEOUT_OUT" | head -1)
@@ -4359,7 +4364,7 @@ if $_QP_COMPILED; then
     rm -f "$_QP_STATUS"
 
     # play-queue: multiple files → 2 durations + 2 DONEs
-    _QP_STATUS2="${TMPDIR:-/tmp}/speak11_qpstatus2_$$"
+    _QP_STATUS2="${TMPDIR:-/tmp}/just-aloud_qpstatus2_$$"
     _run_with_timeout 5 bash -c \
         "printf '%s\t%s\t%s\t%s\t%s\n%s\t%s\t%s\t%s\t%s\n' \"$_TEST_WAV\" '1700000000.000' '0' '50' \"$_QP_STATUS2\" \"$_TEST_WAV\" '1700000001.000' '50' '60' \"$_QP_STATUS2\" | \"$_QP_BIN\" play-queue"
     _QP_NDUR=$(echo "$_TIMEOUT_OUT" | grep -cE '^[0-9]+\.[0-9]+$' || true)
@@ -4378,66 +4383,90 @@ if $_QP_COMPILED; then
 fi
 
 rm -f "$_TEST_WAV"
-[ "$_QP_BIN" != "$HOME/.local/bin/speak11-audio" ] && rm -f "$_QP_BIN"
+[ "$_QP_BIN" != "$HOME/.local/bin/just-aloud-audio" ] && rm -f "$_QP_BIN"
 
 # ── Sentence pause config ────────────────────────────────────────
 
 section "Sentence pause config"
 
-# speak.sh: SENTENCE_PAUSE variable with env > config > default priority
-check "speak.sh: SENTENCE_PAUSE default is 400" \
+# just-aloud.sh: SENTENCE_PAUSE variable with env > config > default priority
+check "just-aloud.sh: SENTENCE_PAUSE default is 400" \
     "yes" "$(grep -q 'SENTENCE_PAUSE:-400' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: SENTENCE_PAUSE validated as numeric" \
+check "just-aloud.sh: SENTENCE_PAUSE validated as numeric" \
     "yes" "$(grep -q '_validate_num SENTENCE_PAUSE' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: _PAUSE_MS computed with perl" \
+check "just-aloud.sh: _PAUSE_MS computed with perl" \
     "yes" "$(grep -q '_PAUSE_MS=.*perl.*SENTENCE_PAUSE' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: play_audio passes pause to queue player (6 fields)" \
+check "just-aloud.sh: play_audio passes pause to queue player (6 fields)" \
     "yes" "$(grep -q 'STATUS_FILE.*{3:-0}.*>&7' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: first sentence gets zero pause" \
+check "just-aloud.sh: first sentence gets zero pause" \
     "yes" "$(grep -q '_FIRST.*_THIS_PAUSE=0' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-# Speak11.swift: sentencePause config field
-check "Speak11.swift: sentencePause config field" \
+# JustAloud.swift: sentencePause config field
+check "JustAloud.swift: sentencePause config field" \
     "yes" "$(grep -q 'var sentencePause.*Int.*= 400' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: SENTENCE_PAUSE in config load" \
+check "JustAloud.swift: SENTENCE_PAUSE in config load" \
     "yes" "$(grep -q 'case "SENTENCE_PAUSE"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: SENTENCE_PAUSE in config save" \
+check "JustAloud.swift: SENTENCE_PAUSE in config save" \
     "yes" "$(grep -q 'SENTENCE_PAUSE=.*sentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: editSentencePause handler" \
+check "JustAloud.swift: editSentencePause handler" \
     "yes" "$(grep -q 'func editSentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: Sentence Pause menu item shows current value" \
+check "JustAloud.swift: Sentence Pause menu item shows current value" \
     "yes" "$(grep -q 'Sentence Pause.*sentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Speak11.swift: Sentence Pause uses text input dialog" \
+check "JustAloud.swift: Sentence Pause uses text input dialog" \
     "yes" "$(awk '/func editSentencePause/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'NSTextField' && echo "yes" || echo "no")"
 
-# speak11-audio.swift: pause_ms field in protocol
-check "speak11-audio.swift: maxSplits is 5 (6 fields)" \
-    "yes" "$(grep -q 'maxSplits: 5' "$SCRIPT_DIR/speak11-audio.swift" && echo "yes" || echo "no")"
+# just-aloud-audio.swift: pause_ms field in protocol
+check "just-aloud-audio.swift: maxSplits is 6 (7 fields including playback rate)" \
+    "yes" "$(grep -q 'maxSplits: 6' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"
 
-check "speak11-audio.swift: pauseMs in PlayItem" \
-    "yes" "$(grep -q 'pauseMs.*Int' "$SCRIPT_DIR/speak11-audio.swift" && echo "yes" || echo "no")"
+check "just-aloud-audio.swift: pauseMs in PlayItem" \
+    "yes" "$(grep -q 'pauseMs.*Int' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"
 
-check "speak11-audio.swift: asyncAfter for pause delay" \
-    "yes" "$(grep -q 'asyncAfter.*delay' "$SCRIPT_DIR/speak11-audio.swift" && echo "yes" || echo "no")"
+check "just-aloud-audio.swift: asyncAfter for pause delay" \
+    "yes" "$(grep -q 'asyncAfter.*delay' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"
 
-check "speak11-audio.swift: STATUS_FILE written after pause (inside startPlaying)" \
-    "yes" "$(grep -q 'let startPlaying' "$SCRIPT_DIR/speak11-audio.swift" && echo "yes" || echo "no")"
+check "just-aloud-audio.swift: STATUS_FILE written after pause (inside startPlaying)" \
+    "yes" "$(grep -q 'let startPlaying' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"
+
+# ── Release notes consistency ────────────────────────────────────
+
+section "Release notes consistency"
+
+# Verify CHANGELOG.md matches GitHub release notes (minus the footer).
+# This ensures the CHANGELOG stays the single source of truth.
+_CHANGELOG="$SCRIPT_DIR/CHANGELOG.md"
+
+check "CHANGELOG.md exists" \
+    "yes" "$([ -f "$_CHANGELOG" ] && echo "yes" || echo "no")"
+
+check "CHANGELOG.md has v1.1.0 section" \
+    "yes" "$(grep -q '^## v1.1.0' "$_CHANGELOG" && echo "yes" || echo "no")"
+
+check "release.sh exists" \
+    "yes" "$([ -f "$SCRIPT_DIR/release.sh" ] && echo "yes" || echo "no")"
+
+check "release.sh is local-only" \
+    "yes" "$(! grep -q 'gh release\|git push' "$SCRIPT_DIR/release.sh" && echo "yes" || echo "no")"
+
+check "release.sh signs before packaging" \
+    "yes" "$(awk '/scripts\/sign.sh/{signed=NR} /scripts\/package.sh/{packaged=NR} END{if(signed&&packaged&&signed<packaged)print "yes";else print "no"}' "$SCRIPT_DIR/release.sh")"
 
 # ── Text normalization (PDF cleanup) ─────────────────────────────
 
 section "Text normalization (PDF cleanup)"
 
-# Source normalize_text from speak.sh; use venv python for ftfy support
+# Source normalize_text from just-aloud.sh; use venv python for ftfy support
 # VENV_PYTHON set at top of script (dev venv)
+NORMALIZE_SCRIPT="$SCRIPT_DIR/normalize.py"
 eval "$(awk '/^normalize_text\(\)/,/^}/' "$SPEAK_SH")" 2>/dev/null || true
 
 if type normalize_text &>/dev/null; then
@@ -4802,6 +4831,26 @@ if type normalize_text &>/dev/null; then
 
     check "normalize: URL not eating surrounding text" \
         "See for more." "$(normalize_text "See https://example.com for more.")"
+
+    check "normalize: bare URL verbalized" \
+        "visit go dot nature dot com slash 4rzrnyx for details." \
+        "$(normalize_text "visit go.nature.com/4rzrnyx for details.")"
+
+    check "normalize: bare domain verbalized" \
+        "see example dot com" \
+        "$(normalize_text "see example.com")"
+
+    check "normalize: bare URL with trailing period preserved" \
+        "go dot nature dot com slash 4rzrnyx." \
+        "$(normalize_text "go.nature.com/4rzrnyx.")"
+
+    check "normalize: bare URL with path" \
+        "docs dot python dot org slash 3 slash library" \
+        "$(normalize_text "docs.python.org/3/library")"
+
+    check "normalize: email address not verbalized as URL" \
+        "contact user@example.com" \
+        "$(normalize_text "contact user@example.com")"
 
     # Private Use Area characters (math font garbage)
     check "normalize: strip PUA characters" \
@@ -5553,31 +5602,31 @@ check "normalize: bash sed fallback rejoins hyphenated words" \
     "information" "$_FALLBACK_RESULT"
 
 # Structural checks
-check "speak.sh: normalize_text function defined" \
+check "just-aloud.sh: normalize_text function defined" \
     "yes" "$(grep -q '^normalize_text()' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: normalize_text called after iconv" \
+check "just-aloud.sh: normalize_text called after iconv" \
     "yes" "$(grep -q 'normalize_text' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: sed fallback for missing python" \
+check "just-aloud.sh: sed fallback for missing python" \
     "yes" "$(grep -q 'sed.*/-\$/' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "speak.sh: VENV_PYTHON set before normalize_text" \
+check "just-aloud.sh: VENV_PYTHON set before normalize_text" \
     "yes" "$(awk '/^VENV_PYTHON=/{v=NR} /^normalize_text\(\)/{n=NR} END{print (v<n?"yes":"no")}' "$SPEAK_SH")"
 
-check "speak.sh: no system python3 fallback in normalize_text" \
+check "just-aloud.sh: no system python3 fallback in normalize_text" \
     "yes" "$(awk '/^normalize_text\(\)/,/^}/{if(/:-python3/) found=1} END{print found?"no":"yes"}' "$SPEAK_SH")"
 
-check "speak.sh: no system python3 fallback in split_sentences" \
+check "just-aloud.sh: no system python3 fallback in split_sentences" \
     "yes" "$(awk '/^split_sentences\(\)/,/^}/{if(/:-python3/) found=1} END{print found?"no":"yes"}' "$SPEAK_SH")"
 
-check "speak.sh: no system python3 fallback in run_local_tts" \
+check "just-aloud.sh: no system python3 fallback in run_local_tts" \
     "yes" "$(awk '/^run_local_tts\(\)/,/^}/{if(/fallback.*python3|PY=python3/) found=1} END{print found?"no":"yes"}' "$SPEAK_SH")"
 
 check "normalize.py: ftfy is required import (not try/except)" \
     "yes" "$(grep -q '^import.*ftfy' "$SCRIPT_DIR/normalize.py" && echo "yes" || echo "no")"
 
-check "speak.sh: calls normalize.py" \
+check "just-aloud.sh: calls normalize.py" \
     "yes" "$(grep -q 'normalize\.py' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "normalize.py: exists and is executable-compatible" \

@@ -1,0 +1,51 @@
+# Just Aloud changes
+
+This file records the independent downstream work relative to
+[Speak11 `v1.1.0`](https://github.com/smcantab/speak11/releases/tag/v1.1.0).
+
+Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
+
+## 0.9.0 release candidate
+
+### Playback
+
+- Native pause/resume, stop, back 10 seconds, and forward 10 seconds controls.
+- Pitch-preserving playback-speed slider from 0.7× to 3×.
+- External playback state and control channels for the native audio queue.
+- Menu-bar waveform animation only during audible playback. Generation,
+  sentence pauses, pause, stop, and standby remain static.
+
+### Voices
+
+- Standard macOS Edit commands, including Command-V in voice-ID dialogs.
+- Persistent library of multiple custom ElevenLabs voices.
+- Voice-name lookup through the authenticated ElevenLabs voice endpoint.
+- Voice name as the primary label and copyable ID as secondary text.
+- Inline remove button and a unified radio-style selector for preset and custom
+  cloud voices. Only one cloud voice can be active.
+- Selection updates in place so the Voice menu stays open while comparing
+  voices.
+
+### Independent product
+
+- Product, app bundle, executable, process, bundle ID, Quick Action, config,
+  data, Keychain, runtime files, build output, and installer are renamed to
+  Just Aloud namespaces.
+- Safe opt-in migration copies compatible Speak11 or Speak11 Enhanced settings
+  and Keychain credentials without revealing keys, removing data, or changing
+  the original installation.
+- Original application icon with editable Apple Icon Composer document,
+  layered SVG sources, compiled adaptive Dark and Mono renditions, asset
+  catalog, and `.icns` fallback.
+- About window with creator credit, accurate Speak11 attribution, version/build,
+  source, license, notices, copy-version, and migration actions.
+- Reproducible local build, signing, packaging, notarization, verification,
+  CI, scanning, and Homebrew-cask preparation.
+
+### Distribution and licensing
+
+- Upstream Unlicense text preserved byte-for-byte.
+- Added attribution, licensing, brand, security, contribution, dependency, and
+  release documentation.
+- No signed app, executable, archive, credentials, user configuration, custom
+  voice IDs, personal data, logs, caches, or backups are tracked.

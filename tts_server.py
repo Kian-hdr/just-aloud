@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent TTS daemon for Speak11.
+"""Persistent TTS daemon for Just Aloud.
 
 Keeps the Kokoro model loaded in memory and serves TTS requests over a Unix
 socket.
@@ -23,14 +23,14 @@ import traceback
 
 # ── Paths ────────────────────────────────────────────────────────────
 
-DATA_DIR = os.path.expanduser("~/.local/share/speak11")
+DATA_DIR = os.path.expanduser("~/.local/share/just-aloud")
 SOCKET_PATH = os.path.join(DATA_DIR, "tts.sock")
 PID_FILE = os.path.join(DATA_DIR, "tts_server.pid")
 LOCK_FILE = os.path.join(DATA_DIR, "tts_server.lock")
 LOG_FILE = os.path.join(DATA_DIR, "tts.log")
 
-# Idle timeout in seconds.  Override with SPEAK11_IDLE_TIMEOUT env var.
-IDLE_TIMEOUT = int(os.environ.get("SPEAK11_IDLE_TIMEOUT", "300"))
+# Idle timeout in seconds.  Override with JUST_ALOUD_IDLE_TIMEOUT env var.
+IDLE_TIMEOUT = int(os.environ.get("JUST_ALOUD_IDLE_TIMEOUT", "300"))
 
 # ── Logging ──────────────────────────────────────────────────────────
 
@@ -101,8 +101,8 @@ def generate_audio(text, voice, speed, lang_code, cancel_check=None):
     import numpy as np
     from mlx_audio.audio_io import write as audio_write
 
-    tmp_dir = tempfile.mkdtemp(prefix="speak11_tts_")
-    out_path = os.path.join(tmp_dir, "speak11.wav")
+    tmp_dir = tempfile.mkdtemp(prefix="just_aloud_tts_")
+    out_path = os.path.join(tmp_dir, "just-aloud.wav")
 
     try:
         results = model.generate(
@@ -316,7 +316,7 @@ def main():
     import glob
     import shutil
 
-    for d in glob.glob(os.path.join(tempfile.gettempdir(), "speak11_tts_*")):
+    for d in glob.glob(os.path.join(tempfile.gettempdir(), "just_aloud_tts_*")):
         try:
             shutil.rmtree(d, ignore_errors=True)
         except OSError:

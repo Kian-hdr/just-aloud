@@ -1,5 +1,5 @@
 #!/bin/bash
-# install.command — Speak11 installer for macOS
+# install.command: Just Aloud installer for macOS
 # Double-click this file in Finder to run.
 
 set -e
@@ -13,7 +13,7 @@ xattr -dr com.apple.quarantine "$SCRIPT_DIR" 2>/dev/null || true
 
 INSTALL_DIR="$HOME/.local/bin"
 SERVICES_DIR="$HOME/Library/Services"
-WORKFLOW_NAME="Speak Selection.workflow"
+WORKFLOW_NAME="Speak Selection with Just Aloud.workflow"
 
 # Guard Terminal.app-specific AppleScript (user may use iTerm2, Warp, etc.)
 _IS_TERMINAL_APP=false
@@ -25,11 +25,11 @@ _focus_terminal() {
 }
 
 # ── Single-instance guard ─────────────────────────────────────────
-_LOCKDIR="/tmp/speak11_install.lock"
+_LOCKDIR="/tmp/just_aloud_install.lock"
 if ! mkdir "$_LOCKDIR" 2>/dev/null; then
     _holder_pid=$(cat "$_LOCKDIR/pid" 2>/dev/null)
     if [ -n "$_holder_pid" ] && kill -0 "$_holder_pid" 2>/dev/null; then
-        osascript -e 'display dialog "The Speak11 installer is already running." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null || true
+        osascript -e 'display dialog "The Just Aloud installer is already running." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null || true
         exit 0
     fi
     # Stale lock — previous installer crashed. Remove and continue.
@@ -63,7 +63,7 @@ trap cleanup EXIT
 header() {
     printf '\033[2J\033[H'
     printf '\n'
-    printf '  \033[1mSpeak11\033[0m\n'
+    printf '  \033[1mJust Aloud\033[0m\n'
     printf '  ─────────────────\n\n'
 }
 
@@ -91,7 +91,7 @@ unspin() {
 }
 
 # ── Welcome ───────────────────────────────────────────────────────
-result=$(osascript -e 'button returned of (display dialog "Welcome to Speak11!\n\nThis installer will:\n  • Copy the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Speak11" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null || true)
+result=$(osascript -e 'button returned of (display dialog "Welcome to Just Aloud!\n\nThis installer will:\n  • Copy the speak script into ~/.local/bin\n  • Build a menu bar app that registers ⌥⇧/ as a global hotkey\n  • Optionally install local TTS for free offline use (Apple Silicon)" with title "Just Aloud" buttons {"Quit", "Continue"} default button "Continue" with icon note)' 2>/dev/null || true)
 [ "$result" = "Quit" ] && exit 0
 _focus_terminal
 
@@ -102,7 +102,7 @@ IS_ARM64=false
 # ── Backend choice ───────────────────────────────────────────────
 BACKEND_CHOICE="ElevenLabs Only"
 if $IS_ARM64; then
-    BACKEND_CHOICE=$(osascript -e 'button returned of (display dialog "Choose your TTS backend:" & return & return & "• ElevenLabs Only — cloud API" & return & "• Both — ElevenLabs + local fallback" & return & "• Local Only — free, runs on your Mac" with title "Speak11" buttons {"ElevenLabs Only", "Both", "Local Only"} default button "Both" with icon note)' 2>/dev/null || true)
+    BACKEND_CHOICE=$(osascript -e 'button returned of (display dialog "Choose your TTS backend:" & return & return & "• ElevenLabs Only — cloud API" & return & "• Both — ElevenLabs + local fallback" & return & "• Local Only — free, runs on your Mac" with title "Just Aloud" buttons {"ElevenLabs Only", "Both", "Local Only"} default button "Both" with icon note)' 2>/dev/null || true)
     [ -z "$BACKEND_CHOICE" ] && BACKEND_CHOICE="ElevenLabs Only"
     _focus_terminal
 fi
@@ -130,7 +130,7 @@ validate_api_key() {
 prompt_api_key() {
     local prompt="$1" skip_btn="$2" key="" err_prefix=""
     while true; do
-        key=$(osascript -e "text returned of (display dialog \"${err_prefix}${prompt}\" with title \"Speak11\" default answer \"\" with hidden answer buttons {\"${skip_btn}\", \"Install\"} default button \"Install\")" 2>/dev/null || true)
+        key=$(osascript -e "text returned of (display dialog \"${err_prefix}${prompt}\" with title \"Just Aloud\" default answer \"\" with hidden answer buttons {\"${skip_btn}\", \"Install\"} default button \"Install\")" 2>/dev/null || true)
         [ -z "$key" ] && break  # user clicked Skip/Cancel
         validate_api_key "$key"
         if [ -z "$_KEY_ERROR" ]; then
@@ -155,14 +155,14 @@ else
     if ! prompt_api_key \
         "Paste your ElevenLabs API key:\\n\\nThe key needs Text-to-Speech and User Read permissions." \
         "Cancel"; then
-        osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Speak11" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null || true
+        osascript -e 'display dialog "No API key entered. Installation cancelled." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution' 2>/dev/null || true
         exit 1
     fi
     _focus_terminal
 fi
 
 # ── Settings app choice (ask before work begins) ─────────────────
-settings_result=$(osascript -e 'button returned of (display dialog "Install the Speak11 app?\n\nAdds a waveform icon to your menu bar to change voice, model, and speed without editing any files." with title "Speak11" buttons {"Skip", "Install"} default button "Install" with icon note)' 2>/dev/null || true)
+settings_result=$(osascript -e 'button returned of (display dialog "Install the Just Aloud app?\n\nAdds a waveform icon to your menu bar to change voice, model, and speed without editing any files." with title "Just Aloud" buttons {"Skip", "Install"} default button "Install" with icon note)' 2>/dev/null || true)
 _focus_terminal
 
 header
@@ -170,8 +170,8 @@ header
 # ── Store key in Keychain ─────────────────────────────────────────
 if [ -n "$API_KEY" ]; then
     if security add-generic-password \
-        -a "speak11" \
-        -s "speak11-api-key" \
+        -a "just-aloud" \
+        -s "just-aloud-api-key" \
         -w "$API_KEY" \
         -U 2>/dev/null; then
         step "API key stored in Keychain"
@@ -181,7 +181,7 @@ if [ -n "$API_KEY" ]; then
 fi
 
 # ── Log file ─────────────────────────────────────────────────────
-_LOG_DIR="$HOME/.local/share/speak11"
+_LOG_DIR="$HOME/.local/share/just-aloud"
 _LOG_FILE="$_LOG_DIR/install.log"
 mkdir -p "$_LOG_DIR"
 # Append to existing log (preserves previous run errors for debugging).
@@ -205,7 +205,7 @@ if [ -z "$_clt_major" ] || [ "$_clt_major" != "$_os_major" ]; then
 
     if [ -n "$_clt_label" ]; then
         spin "Installing $_clt_label (this may take a few minutes)…"
-        if osascript -e "do shell script \"softwareupdate --install \\\"$_clt_label\\\"\" with prompt \"Speak11 needs to update Command Line Tools to compile the settings app.\" with administrator privileges" \
+        if osascript -e "do shell script \"softwareupdate --install \\\"$_clt_label\\\"\" with prompt \"Just Aloud needs to update Command Line Tools to compile the settings app.\" with administrator privileges" \
             >> "$_LOG_FILE" 2>&1; then
             :
         fi
@@ -230,7 +230,7 @@ fi
 # Reset to the CLT path if it has swiftc but xcrun can't find it.
 if ! xcrun swiftc --version >/dev/null 2>&1; then
     if [ -x /Library/Developer/CommandLineTools/usr/bin/swiftc ]; then
-        osascript -e 'do shell script "xcode-select --switch /Library/Developer/CommandLineTools" with prompt "Speak11 needs to configure the Swift compiler." with administrator privileges' 2>>"$_LOG_FILE" || true
+        osascript -e 'do shell script "xcode-select --switch /Library/Developer/CommandLineTools" with prompt "Just Aloud needs to configure the Swift compiler." with administrator privileges' 2>>"$_LOG_FILE" || true
         _focus_terminal
     fi
 fi
@@ -252,10 +252,10 @@ if $IS_ARM64 && [ "$BACKEND_CHOICE" != "ElevenLabs Only" ]; then
             | tail -3 | tr '"\\' "'/" | head -c 500)
         [ -z "$_mlx_err" ] && _mlx_err=$(tail -3 "$_LOG_FILE" 2>/dev/null | tr '"\\' "'/")
         if [ "$BACKEND_CHOICE" = "Local Only" ]; then
-            osascript -e "display dialog \"Could not install local TTS.\n\n${_mlx_err:-An internet connection is required for the first install.}\n\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon stop" 2>/dev/null || true
+            osascript -e "display dialog \"Could not install local TTS.\n\n${_mlx_err:-An internet connection is required for the first install.}\n\nFull log: ~/.local/share/just-aloud/install.log\" with title \"Just Aloud\" buttons {\"OK\"} default button \"OK\" with icon stop" 2>/dev/null || true
             exit 1
         else
-            osascript -e "display dialog \"Could not install local TTS.\n\n${_mlx_err:-Check your internet connection.}\n\nElevenLabs will be used instead.\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution" 2>/dev/null || true
+            osascript -e "display dialog \"Could not install local TTS.\n\n${_mlx_err:-Check your internet connection.}\n\nElevenLabs will be used instead.\nFull log: ~/.local/share/just-aloud/install.log\" with title \"Just Aloud\" buttons {\"OK\"} default button \"OK\" with icon caution" 2>/dev/null || true
             _focus_terminal
         fi
     fi
@@ -265,7 +265,7 @@ fi
 # ftfy fixes mojibake (encoding errors) in text copied from PDFs.
 # If the local-TTS venv exists, ftfy is already installed.  Otherwise
 # create a lightweight venv with just ftfy.
-_VENV_DIR="$HOME/.local/share/speak11/venv"
+_VENV_DIR="$HOME/.local/share/just-aloud/venv"
 if [ ! -d "$_VENV_DIR" ]; then
     if command -v python3 >/dev/null 2>&1; then
         spin "Setting up text normalization…"
@@ -283,19 +283,19 @@ fi
 
 # ── Install speak.sh ──────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
-cp -f "$SCRIPT_DIR/speak.sh" "$INSTALL_DIR/speak.sh"
-cp -f "$SCRIPT_DIR/normalize.py" "$INSTALL_DIR/normalize.py"
-cp -f "$SCRIPT_DIR/tts_server.py" "$INSTALL_DIR/tts_server.py"
-cp -f "$SCRIPT_DIR/install-local.sh" "$INSTALL_DIR/install-local.sh"
+cp -f "$SCRIPT_DIR/just-aloud.sh" "$INSTALL_DIR/just-aloud"
+cp -f "$SCRIPT_DIR/normalize.py" "$INSTALL_DIR/just-aloud-normalize.py"
+cp -f "$SCRIPT_DIR/tts_server.py" "$INSTALL_DIR/just-aloud-tts-server.py"
+cp -f "$SCRIPT_DIR/install-local.sh" "$INSTALL_DIR/just-aloud-install-local"
 if [ -f "$SCRIPT_DIR/uninstall.command" ]; then
-    cp -f "$SCRIPT_DIR/uninstall.command" "$INSTALL_DIR/uninstall.command"
-    chmod +x "$INSTALL_DIR/uninstall.command"
+    cp -f "$SCRIPT_DIR/uninstall.command" "$INSTALL_DIR/just-aloud-uninstall"
+    chmod +x "$INSTALL_DIR/just-aloud-uninstall"
 fi
-chmod +x "$INSTALL_DIR/speak.sh" "$INSTALL_DIR/install-local.sh"
-# Compile speak11-audio (fast mute check via CoreAudio, replaces osascript)
-if [ -f "$SCRIPT_DIR/speak11-audio.swift" ]; then
-    xcrun swiftc "$SCRIPT_DIR/speak11-audio.swift" -o "$INSTALL_DIR/speak11-audio" -O 2>>"$_LOG_FILE" && \
-        chmod +x "$INSTALL_DIR/speak11-audio" || true
+chmod +x "$INSTALL_DIR/just-aloud" "$INSTALL_DIR/just-aloud-install-local"
+# Compile just-aloud-audio (fast mute check via CoreAudio, replaces osascript)
+if [ -f "$SCRIPT_DIR/just-aloud-audio.swift" ]; then
+    xcrun swiftc "$SCRIPT_DIR/just-aloud-audio.swift" -o "$INSTALL_DIR/just-aloud-audio" -O 2>>"$_LOG_FILE" && \
+        chmod +x "$INSTALL_DIR/just-aloud-audio" || true
 fi
 step "Scripts copied to ~/.local/bin"
 
@@ -308,7 +308,7 @@ cat > "$SERVICES_DIR/$WORKFLOW_NAME/Contents/Info.plist" << 'END_INFO'
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Speak Selection</string>
+    <string>Speak Selection with Just Aloud</string>
 </dict>
 </plist>
 END_INFO
@@ -375,7 +375,7 @@ cat > "$SERVICES_DIR/$WORKFLOW_NAME/Contents/document.wflow" << 'END_WFLOW'
                 <key>ActionParameters</key>
                 <dict>
                     <key>COMMAND_STRING</key>
-                    <string>~/.local/bin/speak.sh</string>
+                    <string>~/.local/bin/just-aloud</string>
                     <key>CheckedForUserDefaultShell</key>
                     <true/>
                     <key>inputMethod</key>
@@ -521,7 +521,7 @@ step "Quick Action created"
 # ── Write config (before building the app — avoids first-run race) ─
 # install-local.sh may have created a partial config earlier;
 # this ensures correct values for the chosen backend.
-mkdir -p "$HOME/.config/speak11"
+mkdir -p "$HOME/.config/just-aloud"
 case "$BACKEND_CHOICE" in
     "ElevenLabs Only")
         _CFG_BACKEND="elevenlabs"
@@ -541,7 +541,7 @@ case "$BACKEND_CHOICE" in
         ;;
 esac
 
-_EXISTING_CONFIG="$HOME/.config/speak11/config"
+_EXISTING_CONFIG="$HOME/.config/just-aloud/config"
 if [ -f "$_EXISTING_CONFIG" ]; then
     # Re-install: update backend fields, preserve user customizations
     _TMPCONF=$(mktemp)
@@ -559,12 +559,15 @@ else
 TTS_BACKEND="$_CFG_BACKEND"
 TTS_BACKENDS_INSTALLED="$_CFG_INSTALLED"
 VOICE_ID="pFZP5JQG7iQjIQuC4Bku"
+CUSTOM_VOICE_IDS=""
+CUSTOM_VOICE_NAMES_B64=""
 MODEL_ID="eleven_flash_v2_5"
 STABILITY="0.5"
 SIMILARITY_BOOST="0.75"
 STYLE="0.0"
 USE_SPEAKER_BOOST="true"
 SPEED="1.0"
+PLAYBACK_SPEED="1.0"
 LOCAL_VOICE="bf_lily"
 LOCAL_SPEED="1.0"
 CFGEOF
@@ -573,14 +576,14 @@ fi
 
 # ── Build and install settings menu bar app ───────────────────────
 if [ "$settings_result" = "Install" ]; then
-    APP_BUNDLE="$HOME/Applications/Speak11.app"
-    APP_BINARY="$APP_BUNDLE/Contents/MacOS/Speak11"
+    APP_BUNDLE="$HOME/Applications/Just Aloud.app"
+    APP_BINARY="$APP_BUNDLE/Contents/MacOS/JustAloud"
 
     mkdir -p "$APP_BUNDLE/Contents/MacOS"
 
     # Compile — use xcrun for proper SDK resolution
     spin "Compiling app…"
-    if xcrun swiftc "$SCRIPT_DIR/Speak11.swift" -o "$APP_BINARY" -O 2>>"$_LOG_FILE"; then
+    if xcrun swiftc "$SCRIPT_DIR/JustAloud.swift" -o "$APP_BINARY" -O 2>>"$_LOG_FILE"; then
         compile_ok=0
     else
         compile_ok=$?
@@ -595,7 +598,7 @@ if [ "$settings_result" = "Install" ]; then
         [ -z "$_swift_err" ] && _swift_err=$(tail -3 "$_LOG_FILE" 2>/dev/null | tr '"\\' "'/")
         _swift_ver=$(xcrun swiftc --version 2>/dev/null | head -1 || echo "swiftc not found")
         printf '  Swift: %s\n' "$_swift_ver" >> "$_LOG_FILE"
-        osascript -e "display dialog \"Could not compile the settings app.\n\n${_swift_err:-Unknown error.}\n\nTry updating Xcode Command Line Tools:\n  sudo rm -rf /Library/Developer/CommandLineTools\n  xcode-select --install\n\nFull log: ~/.local/share/speak11/install.log\" with title \"Speak11\" buttons {\"OK\"} default button \"OK\" with icon caution" 2>/dev/null || true
+        osascript -e "display dialog \"Could not compile the settings app.\n\n${_swift_err:-Unknown error.}\n\nTry updating Xcode Command Line Tools:\n  sudo rm -rf /Library/Developer/CommandLineTools\n  xcode-select --install\n\nFull log: ~/.local/share/just-aloud/install.log\" with title \"Just Aloud\" buttons {\"OK\"} default button \"OK\" with icon caution" 2>/dev/null || true
         _focus_terminal
     else
         step "App compiled"
@@ -607,13 +610,17 @@ if [ "$settings_result" = "Install" ]; then
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>Speak11</string>
+    <string>JustAloud</string>
     <key>CFBundleIdentifier</key>
-    <string>com.speak11.app</string>
+    <string>space.exlumina.justaloud</string>
     <key>CFBundleName</key>
-    <string>Speak11</string>
+    <string>Just Aloud</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.9.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Kian Konrad Tajbakhsh. Just Aloud brand artwork reserved.</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
@@ -621,55 +628,41 @@ if [ "$settings_result" = "Install" ]; then
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
+    <string>JustAloud</string>
+    <key>CFBundleIconName</key>
+    <string>JustAloud</string>
 </dict>
 </plist>
 END_PLIST
 
-        # Generate app icon
-        spin "Generating app icon…"
+        # Compile the adaptive Icon Composer resource. actool also generates an
+        # .icns fallback for macOS versions that do not use appearance variants.
+        spin "Installing app resources…"
         mkdir -p "$APP_BUNDLE/Contents/Resources"
-        _ICONTMP=$(mktemp -d)
-        _ICONSET="$_ICONTMP/AppIcon.iconset"
-        mkdir -p "$_ICONSET"
-        _ICONSCRIPT=$(mktemp /tmp/genicon_XXXXXX)
-        cat > "$_ICONSCRIPT" << 'SWIFT_END'
-import AppKit
-let dir = CommandLine.arguments[1]
-func px(_ n: Int) -> Data? {
-    let s = CGFloat(n)
-    guard let ctx = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8,
-        bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-    ctx.addPath(CGPath(roundedRect: CGRect(x:0, y:0, width:s, height:s),
-        cornerWidth:s*0.22, cornerHeight:s*0.22, transform:nil))
-    ctx.setFillColor(CGColor(red:0.15, green:0.47, blue:0.96, alpha:1))
-    ctx.fillPath()
-    NSGraphicsContext.current = NSGraphicsContext(cgContext:ctx, flipped:false)
-    if let sym = NSImage(systemSymbolName:"waveform", accessibilityDescription:nil),
-       let img = sym.withSymbolConfiguration(
-           NSImage.SymbolConfiguration(pointSize:s*0.48, weight:.medium)) {
-        NSColor.white.set()
-        img.draw(at:NSPoint(x:(s-img.size.width)/2, y:(s-img.size.height)/2),
-            from:.zero, operation:.sourceOver, fraction:1)
-    }
-    guard let ci = ctx.makeImage() else { return nil }
-    return NSBitmapImageRep(cgImage:ci).representation(using:.png, properties:[:])
-}
-for (n,name) in [(16,"icon_16x16"),(32,"icon_16x16@2x"),(32,"icon_32x32"),
-    (64,"icon_32x32@2x"),(128,"icon_128x128"),(256,"icon_128x128@2x"),
-    (256,"icon_256x256"),(512,"icon_256x256@2x"),(512,"icon_512x512"),(1024,"icon_512x512@2x")] {
-    if let d = px(n) { try? d.write(to:URL(fileURLWithPath:"\(dir)/\(name).png")) }
-}
-SWIFT_END
-        if xcrun swift "$_ICONSCRIPT" "$_ICONSET" 2>/dev/null; then
-            iconutil -c icns "$_ICONSET" \
-                -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns" 2>/dev/null || true
+        _icon_partial=$(mktemp "${TMPDIR:-/tmp}/just-aloud-icon.XXXXXXXX")
+        if xcrun actool \
+            --compile "$APP_BUNDLE/Contents/Resources" \
+            --platform macosx \
+            --minimum-deployment-target 13.0 \
+            --app-icon JustAloud \
+            --output-partial-info-plist "$_icon_partial" \
+            "$SCRIPT_DIR/Design/Icon/JustAloud.icon" >>"$_LOG_FILE" 2>&1; then
+            step "Adaptive app icon compiled"
+        else
+            cp -f "$SCRIPT_DIR/Design/Icon/JustAloud.icns" \
+                "$APP_BUNDLE/Contents/Resources/JustAloud.icns"
+            /usr/libexec/PlistBuddy -c 'Delete :CFBundleIconName' \
+                "$APP_BUNDLE/Contents/Info.plist" >/dev/null 2>&1 || true
+            printf '  Adaptive icon compiler unavailable; installed static fallback.\n' >> "$_LOG_FILE"
         fi
-        rm -f "$_ICONSCRIPT"
-        rm -rf "$_ICONTMP"
+        rm -f "$_icon_partial"
+        cp -f "$SCRIPT_DIR/Assets.xcassets/MenuBarIcon.imageset/menu-bar-template.svg" \
+            "$APP_BUNDLE/Contents/Resources/menu-bar-template.svg"
+        for resource in LICENSE ATTRIBUTION.md THIRD_PARTY_NOTICES.md LICENSING.md BRAND.md; do
+            [ -f "$SCRIPT_DIR/$resource" ] && cp -f "$SCRIPT_DIR/$resource" "$APP_BUNDLE/Contents/Resources/"
+        done
         unspin
-        step "App icon generated"
+        step "App resources installed"
 
         # Code sign
         codesign --force --sign - "$APP_BUNDLE" 2>/dev/null || true
@@ -678,9 +671,9 @@ SWIFT_END
         printf '\n  \033[32mInstallation complete.\033[0m\n\n'
 
         # Offer login item (skip if already added from a previous install)
-        _has_login_item=$(osascript -e 'tell application "System Events" to get the name of every login item' 2>/dev/null | grep -c "Speak11" || true)
+        _has_login_item=$(osascript -e 'tell application "System Events" to get the name of every login item' 2>/dev/null | grep -c "Just Aloud" || true)
         if [ "$_has_login_item" -eq 0 ] 2>/dev/null; then
-            login_result=$(osascript -e 'button returned of (display dialog "Launch Speak11 automatically at login?" with title "Speak11" buttons {"Not Now", "Yes"} default button "Yes" with icon note)' 2>/dev/null || true)
+            login_result=$(osascript -e 'button returned of (display dialog "Launch Just Aloud automatically at login?" with title "Just Aloud" buttons {"Not Now", "Yes"} default button "Yes" with icon note)' 2>/dev/null || true)
             if [ "$login_result" = "Yes" ]; then
                 osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$APP_BUNDLE\", hidden:true}" 2>/dev/null || true
             fi
@@ -693,20 +686,20 @@ fi
 
 # ── Done ──────────────────────────────────────────────────────────
 if [ "${settings_result:-}" = "Install" ] && [ "${compile_ok:-1}" -eq 0 ]; then
-    _DONE_MSG="Speak11 is installed!\n\n⌥⇧/ (Option + Shift + /) speaks your selection anywhere — including Electron apps like Beeper, Slack, and VS Code.\n\nThe ⊶ icon in your menu bar lets you change voice, model, and speed.\n\nFirst use: open the menu bar icon and grant Accessibility access when prompted."
+    _DONE_MSG="Just Aloud is installed!\n\n⌥⇧/ (Option + Shift + /) speaks your selection anywhere — including Electron apps like Beeper, Slack, and VS Code.\n\nThe ⊶ icon in your menu bar lets you change voice, model, and speed.\n\nFirst use: open the menu bar icon and grant Accessibility access when prompted."
     if [ "${mlx_ok:-1}" -eq 0 ]; then
         _DONE_MSG="$_DONE_MSG\n\nLocal TTS is ready — the Kokoro voice model has been downloaded."
     fi
-    osascript -e "display dialog \"$_DONE_MSG\" with title \"Speak11\" buttons {\"Done\"} default button \"Done\" with icon note" 2>/dev/null || true
+    osascript -e "display dialog \"$_DONE_MSG\" with title \"Just Aloud\" buttons {\"Done\"} default button \"Done\" with icon note" 2>/dev/null || true
 elif [ "${settings_result:-}" = "Install" ] && [ "${compile_ok:-1}" -ne 0 ]; then
     printf '\n  \033[32mInstallation complete (without settings app).\033[0m\n\n'
-    result=$(osascript -e 'button returned of (display dialog "Speak11 is installed, but the menu bar app could not be compiled.\n\nYou can still use Speak11 by assigning a keyboard shortcut:\n\n1. System Settings will open\n2. Go to Keyboard Shortcuts → Services → Text\n3. Find \"Speak Selection\" and assign a shortcut\n\nSuggested: ⌃⌥S (Control+Option+S)\n\nTo get the menu bar app, update Xcode Command Line Tools and re-run the installer." with title "Speak11" buttons {"Done", "Open System Settings"} default button "Open System Settings" with icon caution)' 2>/dev/null || true)
+    result=$(osascript -e 'button returned of (display dialog "Just Aloud is installed, but the menu bar app could not be compiled.\n\nYou can still use Just Aloud by assigning a keyboard shortcut:\n\n1. System Settings will open\n2. Go to Keyboard Shortcuts → Services → Text\n3. Find \"Speak Selection with Just Aloud\" and assign a shortcut\n\nSuggested: ⌃⌥S (Control+Option+S)\n\nTo get the menu bar app, update Xcode Command Line Tools and re-run the installer." with title "Just Aloud" buttons {"Done", "Open System Settings"} default button "Open System Settings" with icon caution)' 2>/dev/null || true)
     if [ "${result:-}" = "Open System Settings" ]; then
         open "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts"
     fi
 else
     printf '\n  \033[32mInstallation complete.\033[0m\n\n'
-    result=$(osascript -e 'button returned of (display dialog "Speak11 is installed!\n\nOne last step: assign a keyboard shortcut.\n\n1. System Settings will open\n2. Go to Keyboard Shortcuts → Services → Text\n3. Find \"Speak Selection\" and double-click to assign a shortcut\n\nSuggested: ⌃⌥S (Control+Option+S)" with title "Speak11" buttons {"Done", "Open System Settings"} default button "Open System Settings" with icon note)' 2>/dev/null || true)
+    result=$(osascript -e 'button returned of (display dialog "Just Aloud is installed!\n\nOne last step: assign a keyboard shortcut.\n\n1. System Settings will open\n2. Go to Keyboard Shortcuts → Services → Text\n3. Find \"Speak Selection with Just Aloud\" and double-click to assign a shortcut\n\nSuggested: ⌃⌥S (Control+Option+S)" with title "Just Aloud" buttons {"Done", "Open System Settings"} default button "Open System Settings" with icon note)' 2>/dev/null || true)
     if [ "${result:-}" = "Open System Settings" ]; then
         open "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts"
     fi
