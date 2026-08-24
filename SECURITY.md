@@ -6,10 +6,9 @@ Security fixes are provided for the latest published Just Aloud release.
 
 ## Reporting a vulnerability
 
-Until GitHub private vulnerability reporting is enabled, do not open a public
-issue containing API keys, voice IDs, personal text, Keychain output, or exploit
-details. Use GitHub's private vulnerability-reporting channel once it is shown
-as enabled on the repository Security page.
+Use the repository's enabled GitHub private vulnerability-reporting channel.
+Do not open a public issue containing API keys, voice IDs, personal text,
+Keychain output, or exploit details.
 
 Include the affected version, macOS version, reproduction steps, impact, and
 the smallest non-sensitive diagnostic excerpt that demonstrates the issue.

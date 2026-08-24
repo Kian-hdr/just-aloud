@@ -36,9 +36,9 @@ private multi-voice library.
 
 ### Release candidate
 
-No public release or Homebrew cask exists yet. The repository is prepared for
-publication, but installation must not be described as available until a signed
-and notarized artifact is published with its real checksum.
+The source repository is public, but no downloadable release or Homebrew cask
+exists yet. Installation must not be described as generally available until a
+signed and notarized artifact is published with its real checksum.
 
 For a local source build:
 
