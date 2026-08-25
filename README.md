@@ -1,5 +1,9 @@
 # Just Aloud
 
+<p align="center">
+  <img src="Design/Icon/Previews/icon-composer-Default.png" alt="Just Aloud app icon" width="180">
+</p>
+
 Just Aloud is a native macOS menu-bar app that reads selected text with
 ElevenLabs or optional local Kokoro TTS, with familiar playback controls and a
 private multi-voice library.
