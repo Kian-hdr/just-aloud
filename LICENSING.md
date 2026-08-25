@@ -6,6 +6,11 @@ The source code and modifications in this repository are released under The
 Unlicense. [`LICENSE`](LICENSE) preserves the upstream Unlicense text verbatim.
 Original Speak11 portions remain under that same license.
 
+Everyone may use, copy, modify, publish, distribute, sublicense, or sell the
+source code under The Unlicense. That source-code permission does not extend to
+the protected Just Aloud name, icon, menu-bar artwork, or original brand
+artwork described below.
+
 ## Brand assets
 
 The Just Aloud name, application icon, menu-bar artwork, and original brand

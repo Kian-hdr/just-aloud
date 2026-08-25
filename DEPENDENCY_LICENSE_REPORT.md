@@ -1,6 +1,6 @@
 # Dependency license report
 
-Generated on 2026-08-24 by `scripts/audit-dependencies.sh`. Versions are the resolver result for the optional local-TTS install set.
+Generated on 2026-08-25 by `scripts/audit-dependencies.sh`. Versions are the resolver result for the optional local-TTS install set.
 
 | Package | Version | Source | License finding |
 |---|---:|---|---|

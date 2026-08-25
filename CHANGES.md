@@ -5,7 +5,19 @@ This file records the independent downstream work relative to
 
 Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
 
-## 0.9.0 release candidate
+## 0.9.1
+
+- Added a native first-launch welcome and setup window with adaptive icon,
+  creator and Speak11 attribution, privacy summary, ElevenLabs API-key setup,
+  Accessibility guidance, optional migration, licensing links, and a clear
+  completion action.
+- Added an About-window action for reopening Welcome & Setup at any time.
+- Stored welcome completion only in the Just Aloud preferences namespace and
+  added isolated first-launch/completion regression coverage.
+- Clarified code-versus-brand licensing and acknowledged Codex only as a
+  development-assistance tool.
+
+## 0.9.0
 
 ### Playback
 

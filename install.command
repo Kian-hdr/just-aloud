@@ -616,9 +616,9 @@ if [ "$settings_result" = "Install" ]; then
     <key>CFBundleName</key>
     <string>Just Aloud</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.9.0</string>
+    <string>0.9.1</string>
     <key>NSHumanReadableCopyright</key>
     <string>© 2026 Kian Konrad Tajbakhsh. Just Aloud brand artwork reserved.</string>
     <key>LSMinimumSystemVersion</key>

@@ -24,6 +24,15 @@ private let speechPIDPath = (NSTemporaryDirectory() as NSString)
     .appendingPathComponent("just_aloud_tts.pid")
 private let playbackStatePath = (NSTemporaryDirectory() as NSString)
     .appendingPathComponent("just_aloud_audio_state")
+private let welcomeCompletionKey = "welcomeCompleted"
+private let welcomeDefaults: UserDefaults = {
+    if let suite = ProcessInfo.processInfo.environment["JUST_ALOUD_DEFAULTS_SUITE"],
+       !suite.isEmpty,
+       let isolatedDefaults = UserDefaults(suiteName: suite) {
+        return isolatedDefaults
+    }
+    return .standard
+}()
 
 // MARK: - Config model
 
@@ -317,6 +326,7 @@ private final class VoiceActionButton: NSButton {
     private var cloudVoiceIndicators: [String: NSImageView] = [:]
     private var cloudVoiceSelectionButtons: [VoiceActionButton] = []
     private var aboutWindow: NSWindow?
+    private var welcomeWindow: NSWindow?
 
     // TTS daemon process (managed mode — started by this app)
     private var ttsDaemonProcess: Process?
@@ -332,11 +342,6 @@ private final class VoiceActionButton: NSButton {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if ProcessInfo.processInfo.environment["JUST_ALOUD_UI_APPEARANCE"] == "light" {
-            NSApp.appearance = NSAppearance(named: .aqua)
-        } else if ProcessInfo.processInfo.environment["JUST_ALOUD_UI_APPEARANCE"] == "dark" {
-            NSApp.appearance = NSAppearance(named: .darkAqua)
-        }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = idleMenuBarImage()
         appDelegateRef = self
@@ -344,7 +349,9 @@ private final class VoiceActionButton: NSButton {
         installHotkey()
         refreshVoiceNames(force: true)
         rebuildMenu()
-        if ProcessInfo.processInfo.environment["JUST_ALOUD_SKIP_ACCESSIBILITY_PROMPT"] != "1",
+        let showWelcome = shouldShowWelcomeOnLaunch
+        if !showWelcome,
+           ProcessInfo.processInfo.environment["JUST_ALOUD_SKIP_ACCESSIBILITY_PROMPT"] != "1",
            !AXIsProcessTrusted() {
             requestAccessibility()
         }
@@ -356,6 +363,18 @@ private final class VoiceActionButton: NSButton {
         playbackMonitorTimer = monitor
         RunLoop.main.add(monitor, forMode: .common)
         refreshPlaybackIndicator()
+        if showWelcome {
+            DispatchQueue.main.async { [weak self] in self?.showWelcome() }
+        } else if ProcessInfo.processInfo.environment["JUST_ALOUD_SHOW_ABOUT"] == "1" {
+            DispatchQueue.main.async { [weak self] in self?.showAbout() }
+        }
+    }
+
+    private var shouldShowWelcomeOnLaunch: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["JUST_ALOUD_SKIP_WELCOME"] == "1" { return false }
+        if environment["JUST_ALOUD_FORCE_WELCOME"] == "1" { return true }
+        return !welcomeDefaults.bool(forKey: welcomeCompletionKey)
     }
 
     private func installStandardEditMenu() {
@@ -1785,6 +1804,230 @@ private final class VoiceActionButton: NSButton {
         return "Version \(version) (\(build))"
     }
 
+    private func welcomeSetupRow(
+        symbol: String,
+        title: String,
+        detail: String,
+        buttonTitle: String,
+        action: Selector
+    ) -> NSView {
+        let icon = NSImageView()
+        icon.image = NSImage(
+            systemSymbolName: symbol,
+            accessibilityDescription: title
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+        )
+        icon.contentTintColor = .controlAccentColor
+        icon.imageScaling = .scaleProportionallyDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let heading = NSTextField(labelWithString: title)
+        heading.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        let explanation = NSTextField(wrappingLabelWithString: detail)
+        explanation.font = .systemFont(ofSize: 12)
+        explanation.textColor = .secondaryLabelColor
+        explanation.maximumNumberOfLines = 2
+
+        let labels = NSStackView(views: [heading, explanation])
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 3
+        labels.translatesAutoresizingMaskIntoConstraints = false
+
+        let button = NSButton(title: buttonTitle, target: self, action: action)
+        button.bezelStyle = .rounded
+        button.controlSize = .regular
+        button.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = NSStackView(views: [icon, labels, button])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 14
+        row.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 28),
+            icon.heightAnchor.constraint(equalToConstant: 28),
+            labels.widthAnchor.constraint(equalToConstant: 336),
+            button.widthAnchor.constraint(equalToConstant: 138),
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 58),
+        ])
+        return row
+    }
+
+    @objc private func showWelcome() {
+        if let welcomeWindow {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            welcomeWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        NSApp.setActivationPolicy(.regular)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 704),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false)
+        window.title = "Welcome to Just Aloud"
+        if ProcessInfo.processInfo.environment["JUST_ALOUD_UI_APPEARANCE"] == "light" {
+            window.appearance = NSAppearance(named: .aqua)
+        } else if ProcessInfo.processInfo.environment["JUST_ALOUD_UI_APPEARANCE"] == "dark" {
+            window.appearance = NSAppearance(named: .darkAqua)
+        }
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.tabbingMode = .disallowed
+        window.center()
+
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView = content
+
+        let icon = NSImageView(image: NSApp.applicationIconImage)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: "Welcome to Just Aloud")
+        title.font = .systemFont(ofSize: 28, weight: .bold)
+        title.alignment = .center
+
+        let creator = NSTextField(labelWithString: "Created and maintained by Kian Konrad Tajbakhsh")
+        creator.font = .systemFont(ofSize: 13, weight: .medium)
+        creator.textColor = .secondaryLabelColor
+        creator.alignment = .center
+
+        let summary = NSTextField(wrappingLabelWithString:
+            "Just Aloud reads selected text from any Mac app and gives you native pause, resume, seek, speed, and voice controls from the menu bar.")
+        summary.font = .systemFont(ofSize: 13)
+        summary.alignment = .center
+        summary.maximumNumberOfLines = 2
+        summary.translatesAutoresizingMaskIntoConstraints = false
+
+        let attribution = NSTextField(wrappingLabelWithString:
+            "Based on Speak11, originally created by Stefano Martiniani. Just Aloud is an independent, unofficial derivative and is not affiliated with or endorsed by Speak11 or ElevenLabs.")
+        attribution.font = .systemFont(ofSize: 11)
+        attribution.textColor = .secondaryLabelColor
+        attribution.alignment = .center
+        attribution.maximumNumberOfLines = 3
+        attribution.translatesAutoresizingMaskIntoConstraints = false
+
+        let setupHeading = NSTextField(labelWithString: "Finish setup")
+        setupHeading.font = .systemFont(ofSize: 15, weight: .semibold)
+
+        let apiRow = welcomeSetupRow(
+            symbol: "key.fill",
+            title: "ElevenLabs API key",
+            detail: "Optional for cloud voices. Your key is stored securely in macOS Keychain.",
+            buttonTitle: "Set Up API Key…",
+            action: #selector(welcomeConfigureAPIKey))
+        let accessibilityRow = welcomeSetupRow(
+            symbol: "accessibility",
+            title: "Accessibility permission",
+            detail: "Required only for the global ⌥⇧/ shortcut that reads selected text.",
+            buttonTitle: "Enable…",
+            action: #selector(welcomeRequestAccessibility))
+        let migrationRow = welcomeSetupRow(
+            symbol: "arrow.triangle.2.circlepath",
+            title: "Speak11 settings",
+            detail: "Optionally copy compatible settings and your Keychain credential. Speak11 stays unchanged.",
+            buttonTitle: "Migrate…",
+            action: #selector(migrateFromSpeak11))
+
+        let setupStack = NSStackView(views: [setupHeading, apiRow, accessibilityRow, migrationRow])
+        setupStack.orientation = .vertical
+        setupStack.alignment = .leading
+        setupStack.spacing = 9
+        setupStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let privacyHeading = NSTextField(labelWithString: "Privacy")
+        privacyHeading.font = .systemFont(ofSize: 13, weight: .semibold)
+        let privacyText = NSTextField(wrappingLabelWithString:
+            "Selected text is sent to ElevenLabs only when cloud synthesis is used. Local TTS stays on this Mac. Just Aloud includes no analytics or telemetry.")
+        privacyText.font = .systemFont(ofSize: 12)
+        privacyText.textColor = .secondaryLabelColor
+        privacyText.maximumNumberOfLines = 2
+        privacyText.translatesAutoresizingMaskIntoConstraints = false
+        let privacyStack = NSStackView(views: [privacyHeading, privacyText])
+        privacyStack.orientation = .vertical
+        privacyStack.alignment = .leading
+        privacyStack.spacing = 3
+
+        let source = NSButton(title: "Source Repository", target: self, action: #selector(openSourceRepository))
+        let license = NSButton(title: "View License", target: self, action: #selector(openSoftwareLicense))
+        let attributionButton = NSButton(title: "View Attribution", target: self, action: #selector(openAttribution))
+        let thirdParty = NSButton(title: "Third-Party Licenses", target: self, action: #selector(openThirdPartyLicenses))
+        for button in [source, license, attributionButton, thirdParty] {
+            button.bezelStyle = .inline
+            button.controlSize = .small
+        }
+        let links = NSStackView(views: [source, license, attributionButton, thirdParty])
+        links.orientation = .horizontal
+        links.alignment = .centerY
+        links.spacing = 8
+        links.distribution = .fillEqually
+
+        let finish = NSButton(title: "Start Using Just Aloud", target: self, action: #selector(finishWelcome))
+        finish.bezelStyle = .rounded
+        finish.controlSize = .large
+        finish.keyEquivalent = "\r"
+        finish.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [icon, title, creator, summary, attribution, setupStack, privacyStack, links, finish])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setCustomSpacing(4, after: title)
+        stack.setCustomSpacing(16, after: attribution)
+        stack.setCustomSpacing(15, after: setupStack)
+        stack.setCustomSpacing(16, after: links)
+        content.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            content.widthAnchor.constraint(equalToConstant: 640),
+            content.heightAnchor.constraint(equalToConstant: 704),
+            icon.widthAnchor.constraint(equalToConstant: 96),
+            icon.heightAnchor.constraint(equalToConstant: 96),
+            summary.widthAnchor.constraint(equalToConstant: 540),
+            attribution.widthAnchor.constraint(equalToConstant: 540),
+            setupStack.widthAnchor.constraint(equalToConstant: 540),
+            privacyStack.widthAnchor.constraint(equalToConstant: 540),
+            privacyText.widthAnchor.constraint(equalToConstant: 540),
+            links.widthAnchor.constraint(equalToConstant: 540),
+            finish.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 40),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -40),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24),
+            stack.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+        ])
+
+        welcomeWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func welcomeConfigureAPIKey() {
+        _ = showAPIKeyDialog(forBackendSwitch: false, optional: true)
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        welcomeWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func welcomeRequestAccessibility() {
+        requestAccessibility()
+        NSApp.activate(ignoringOtherApps: true)
+        welcomeWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func finishWelcome() {
+        welcomeDefaults.set(true, forKey: welcomeCompletionKey)
+        welcomeDefaults.synchronize()
+        welcomeWindow?.close()
+    }
+
     @objc private func showAbout() {
         if let aboutWindow {
             NSApp.activate(ignoringOtherApps: true)
@@ -1794,7 +2037,7 @@ private final class VoiceActionButton: NSButton {
 
         NSApp.setActivationPolicy(.regular)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false)
@@ -1841,7 +2084,10 @@ private final class VoiceActionButton: NSButton {
         linkRow.spacing = 8
         linkRow.distribution = .fillEqually
 
-        let actionRow = NSStackView(views: [copyVersion, migrate])
+        let welcome = NSButton(title: "Welcome & Setup…", target: self, action: #selector(showWelcome))
+        welcome.bezelStyle = .rounded
+
+        let actionRow = NSStackView(views: [copyVersion, migrate, welcome])
         actionRow.orientation = .horizontal
         actionRow.spacing = 8
         actionRow.distribution = .fillEqually
@@ -1854,13 +2100,13 @@ private final class VoiceActionButton: NSButton {
         content.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            content.widthAnchor.constraint(equalToConstant: 520),
+            content.widthAnchor.constraint(equalToConstant: 620),
             content.heightAnchor.constraint(equalToConstant: 520),
             icon.widthAnchor.constraint(equalToConstant: 112),
             icon.heightAnchor.constraint(equalToConstant: 112),
-            creator.widthAnchor.constraint(equalToConstant: 450),
-            linkRow.widthAnchor.constraint(equalToConstant: 470),
-            actionRow.widthAnchor.constraint(equalToConstant: 360),
+            creator.widthAnchor.constraint(equalToConstant: 550),
+            linkRow.widthAnchor.constraint(equalToConstant: 560),
+            actionRow.widthAnchor.constraint(equalToConstant: 560),
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -20),
             stack.centerXAnchor.constraint(equalTo: content.centerXAnchor),
@@ -1877,7 +2123,12 @@ private final class VoiceActionButton: NSButton {
     }
 
     func windowWillClose(_ notification: Notification) {
-        if (notification.object as? NSWindow) === aboutWindow {
+        guard let closingWindow = notification.object as? NSWindow else { return }
+        if closingWindow === aboutWindow,
+           welcomeWindow?.isVisible != true {
+            NSApp.setActivationPolicy(.accessory)
+        } else if closingWindow === welcomeWindow,
+                  aboutWindow?.isVisible != true {
             NSApp.setActivationPolicy(.accessory)
         }
     }
@@ -2095,6 +2346,18 @@ if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--inspect-conf
     print("custom_voice_count=\(inspected.customVoiceIds.count)")
     print("named_voice_count=\(inspected.customVoiceNames.count)")
     print("has_active_voice=\(!inspected.voiceId.isEmpty)")
+    exit(0)
+}
+if CommandLine.arguments.count >= 3,
+   CommandLine.arguments[1] == "--inspect-welcome-state",
+   let isolatedDefaults = UserDefaults(suiteName: CommandLine.arguments[2]) {
+    if CommandLine.arguments.count == 4,
+       CommandLine.arguments[3] == "complete" {
+        isolatedDefaults.set(true, forKey: welcomeCompletionKey)
+        isolatedDefaults.synchronize()
+    }
+    print("should_show=\(!isolatedDefaults.bool(forKey: welcomeCompletionKey))")
+    print("domain=\(CommandLine.arguments[2])")
     exit(0)
 }
 #endif

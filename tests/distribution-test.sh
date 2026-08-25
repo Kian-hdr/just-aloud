@@ -108,3 +108,15 @@ grep -q 'custom_voice_count=2' <<< "$inspection"
 grep -q 'named_voice_count=2' <<< "$inspection"
 grep -q 'has_active_voice=true' <<< "$inspection"
 printf 'PASS: migration-compatible config parsing\n'
+
+WELCOME_SUITE="space.exlumina.justaloud.tests.$$.welcome"
+welcome_first=$("$TEST_ROOT/JustAloudTest" --inspect-welcome-state "$WELCOME_SUITE")
+grep -q 'should_show=true' <<< "$welcome_first"
+grep -q "domain=$WELCOME_SUITE" <<< "$welcome_first"
+welcome_complete=$("$TEST_ROOT/JustAloudTest" --inspect-welcome-state "$WELCOME_SUITE" complete)
+grep -q 'should_show=false' <<< "$welcome_complete"
+defaults delete "$WELCOME_SUITE" >/dev/null 2>&1 || true
+grep -q 'showWelcome()' "$ROOT/JustAloud.swift"
+grep -q 'Welcome & Setup' "$ROOT/JustAloud.swift"
+grep -q 'JUST_ALOUD_DEFAULTS_SUITE' "$ROOT/JustAloud.swift"
+printf 'PASS: welcome first-launch completion and About reopen hooks\n'

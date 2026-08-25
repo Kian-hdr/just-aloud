@@ -15,3 +15,10 @@ or endorsed by Stefano Martiniani, the Speak11 project, or ElevenLabs.
 Speak11 and ElevenLabs are names of their respective owners. Their inclusion
 here is solely for attribution, compatibility, and service-identification
 purposes.
+
+## Development assistance
+
+OpenAI Codex was used as a development-assistance tool for parts of the
+downstream implementation, testing, documentation, and release workflow. Codex
+is not presented as a legal author, copyright owner, or conventional human
+contributor.

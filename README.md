@@ -13,6 +13,10 @@ private multi-voice library.
 |---|---|
 | ![Just Aloud voice menu in dark appearance](Documentation/Screenshots/voice-dark.png) | ![Just Aloud voice menu in light appearance](Documentation/Screenshots/voice-light.png) |
 
+| Welcome in dark appearance | Welcome in light appearance |
+|---|---|
+| ![Just Aloud welcome screen in dark appearance](Documentation/Screenshots/welcome-dark.png) | ![Just Aloud welcome screen in light appearance](Documentation/Screenshots/welcome-light.png) |
+
 ## Features
 
 - Pause and resume without losing position
@@ -24,6 +28,7 @@ private multi-voice library.
 - ElevenLabs cloud synthesis or optional local Kokoro synthesis on Apple Silicon
 - Original adaptive macOS icon and separate monochrome menu-bar template
 - Safe opt-in migration from Speak11 without removing the original installation
+- Native first-launch welcome and setup screen, reopenable from About
 
 ## Requirements
 
@@ -36,10 +41,10 @@ private multi-voice library.
 
 ### Direct download
 
-Download `Just-Aloud-0.9.0.zip` from the
+Download the ZIP from the
 [latest release](https://github.com/Kian-hdr/just-aloud/releases/latest), open
-the ZIP, and move **Just Aloud.app** to Applications. The release is signed with
-Kian Konrad Tajbakhsh's Developer ID certificate and notarized by Apple.
+it, and move **Just Aloud.app** to Applications. Releases are signed with Kian
+Konrad Tajbakhsh's Developer ID certificate and notarized by Apple.
 
 For a local source build:
 
@@ -72,6 +77,13 @@ GitHub release.
    Keychain, not in the config file.
 3. Choose **Voice → Add Custom Voice ID…** and paste a voice ID.
 4. Just Aloud fetches the voice name and stores the name and ID locally.
+
+## Accessibility setup
+
+On first launch, choose **Enable…** in Welcome & Setup and allow Just Aloud in
+**System Settings → Privacy & Security → Accessibility**. This permission is
+used only to read selected text when you press the global `⌥⇧/` shortcut. You
+can reopen the guidance from **About Just Aloud → Welcome & Setup…**.
 
 The upstream preset voice IDs are part of Speak11's public stable source. Custom
 voice IDs are personal data and are never included in this repository.
@@ -156,3 +168,7 @@ Launchpad, and About can select the Aqua, Dark Aqua, or tintable rendition.
 The Just Aloud name, icon, menu-bar artwork, and original brand artwork are
 © 2026 Kian Konrad Tajbakhsh, all rights reserved. Source code remains under The
 Unlicense; dependencies remain under their respective licenses.
+
+OpenAI Codex assisted with parts of the downstream implementation, testing,
+documentation, and release workflow. It is not presented as a legal author,
+copyright owner, or conventional human contributor.

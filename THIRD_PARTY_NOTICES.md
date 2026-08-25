@@ -1,6 +1,6 @@
 # Third-party notices and dependency audit
 
-Audit date: 2026-08-24
+Audit date: 2026-08-25
 
 The repository does not vendor a Python environment, model weights, a
 standalone Python distribution, Apple frameworks, or ElevenLabs code. Optional
@@ -64,7 +64,7 @@ local Python environment or model cache.
 
 `espeakng-loader` has no declared license in the inspected package metadata.
 This is a release blocker for any artifact that bundles that package. The
-prepared Just Aloud release candidate does not bundle it. GPL and LGPL packages
+Just Aloud native release does not bundle it. GPL and LGPL packages
 are also downloaded separately and must not be silently folded into a
 proprietary prebuilt runtime.
 

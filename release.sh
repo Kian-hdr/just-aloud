@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Local-only release-candidate pipeline. It never pushes, creates a GitHub
+# Local-only release pipeline. It never pushes, creates a GitHub
 # release, uploads an artifact, or modifies Apple Developer resources.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="${1:-0.9.0}"
+VERSION="${1:-0.9.1}"
 RC_BUILD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud-release.XXXXXXXX")
 APP="$RC_BUILD_DIR/Just Aloud.app"
 VERSION="$VERSION" "$ROOT/scripts/verify.sh"
