@@ -1,6 +1,6 @@
 cask "just-aloud" do
-  version "0.9.0"
-  sha256 "1ab1f5469e7dbaf538327c435d83830d0cdd00d9e5edfdddce2f8e85b7d64be1"
+  version "0.9.1"
+  sha256 "6a873c8ff2ca8a552b14ed9f0879bd4cccec719ac143d26107d84cf161baf846"
 
   url "https://github.com/Kian-hdr/just-aloud/releases/download/v#{version}/Just-Aloud-#{version}.zip"
   name "Just Aloud"
