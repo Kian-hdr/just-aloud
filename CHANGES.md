@@ -9,6 +9,8 @@ Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
 
 - Encoded sentence records losslessly so paragraph newlines, tabs, and Unicode
   survive with or without Python. Failed splitters cannot leak partial records.
+  The native fallback also splits sentences so the pause slider works without
+  installing Python, while retaining exact Unicode offsets and whitespace.
   Later speech-generation failures now report an error and preserve prior
   complete recordings instead of silently stopping or saving partial exports.
 - Preserved the compact menu width by abbreviating long credit balances, with

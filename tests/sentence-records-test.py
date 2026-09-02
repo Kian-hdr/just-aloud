@@ -143,8 +143,12 @@ split_sentences "$text"
                 queued = [line.split('\t') for line in queue.read_text().splitlines()]
                 normalized = (runtime / 'just_aloud_text').read_text()
                 check(len(payloads) == len(queued) > 0, 'every generated chunk queued')
-                if python in ['missing-python', 'python-fails', 'python-pysbd']:
+                if python == 'python-pysbd':
                     check(payloads == [text], 'fallback sends entire input exactly once')
+                if python in ['missing-python', 'python-fails']:
+                    check(''.join(payloads) == text, 'native fallback preserves every character')
+                    if text.startswith('First paragraph.'):
+                        check(len(payloads) == 3, 'native fallback creates real sentence pauses without Python')
                 cursor = 0
                 for index, (payload, row) in enumerate(zip(payloads, queued)):
                     offset, length = int(row[2]), int(row[3])
