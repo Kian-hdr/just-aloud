@@ -343,18 +343,24 @@ private final class VoiceActionButton: NSButton {
     private var ttsDaemonProcess: Process?
 
     private func idleMenuBarImage() -> NSImage {
-        if let path = Bundle.main.path(forResource: "menu-bar-template", ofType: "svg"),
-           let image = NSImage(contentsOfFile: path) {
-            image.isTemplate = true
-            image.accessibilityDescription = "Just Aloud"
-            return image
-        }
-        return NSImage(systemSymbolName: "waveform", accessibilityDescription: "Just Aloud") ?? NSImage()
+        let image = NSImage(
+            systemSymbolName: "play.circle.fill",
+            accessibilityDescription: "Just Aloud") ?? NSImage()
+        image.isTemplate = true
+        return image
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = idleMenuBarImage()
+        statusItem.autosaveName = "space.exlumina.justaloud.status-item"
+        statusItem.isVisible = true
+        if let button = statusItem.button {
+            button.image = idleMenuBarImage()
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.toolTip = "Just Aloud"
+            button.setAccessibilityLabel("Just Aloud menu")
+        }
         appDelegateRef = self
         installStandardEditMenu()
         installHotkey()

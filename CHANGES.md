@@ -7,6 +7,8 @@ Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
 
 ## Unreleased
 
+- Restored the menu-bar item explicitly at launch and gave Just Aloud a
+  distinct native play-circle symbol instead of Speak11's waveform symbol.
 - Fixed sentence-pause timing so the selected milliseconds remain exact at
   every playback speed and are also honored by the `afplay` fallback.
 - Replaced the free-form-only pause control with a native preset submenu plus

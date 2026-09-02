@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed a missing or hidden menu-bar item by restoring its visibility at
+  launch and assigning Just Aloud a distinct play-circle symbol.
 - Fixed the sentence-pause control so the chosen duration is real elapsed
   silence rather than shrinking as playback speed increases.
 - Added clear pause presets, a validated custom value, live updates for active

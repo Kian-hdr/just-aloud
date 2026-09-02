@@ -4444,6 +4444,12 @@ check "JustAloud.swift: Sentence Pause offers native preset selector" \
 check "JustAloud.swift: Sentence Pause supports custom text input" \
     "yes" "$(awk '/func editSentencePause/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'NSTextField' && echo "yes" || echo "no")"
 
+check "JustAloud.swift: menu-bar item explicitly restores visibility" \
+    "yes" "$(grep -q 'statusItem.isVisible = true' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: menu-bar identity is distinct from Speak11" \
+    "yes" "$(grep -q 'systemSymbolName: "play.circle.fill"' "$SETTINGS_SWIFT" && grep -q 'space.exlumina.justaloud.status-item' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
 # just-aloud-audio.swift: pause_ms field in protocol
 check "just-aloud-audio.swift: maxSplits is 6 (7 fields including playback rate)" \
     "yes" "$(grep -q 'maxSplits: 6' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"
