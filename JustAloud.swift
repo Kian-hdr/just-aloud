@@ -27,7 +27,7 @@ private let playbackStatePath = (NSTemporaryDirectory() as NSString)
     .appendingPathComponent("just_aloud_audio_state")
 private let statusItemAutosaveName = "space.exlumina.justaloud.status-item"
 private let statusItemPositionKey = "NSStatusItem Preferred Position \(statusItemAutosaveName)"
-private let defaultVisibleStatusItemPosition = 360
+private let defaultVisibleStatusItemPosition = 560
 private let welcomeCompletionKey = "welcomeCompleted"
 private let welcomeDefaults: UserDefaults = {
     if let suite = ProcessInfo.processInfo.environment["JUST_ALOUD_DEFAULTS_SUITE"],
