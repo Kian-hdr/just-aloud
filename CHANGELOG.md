@@ -9,6 +9,7 @@
   Sentence records now safely encode embedded newlines and tabs, including the
   missing/failed-Python fallback. Later-chunk failures are visible and do not
   replace complete recordings with partial audio.
+- Sentence pauses also work without Python through a built-in macOS fallback.
 - Restored the original menu width; long credit balances compact without hiding
   the percentage, while hover and VoiceOver retain exact totals.
 - Updated the persistent credit-usage status to show used / total credits and

@@ -273,9 +273,9 @@ _trace() {
 # Records are offset<TAB>length<TAB>base64(UTF-8 text). Raw text must never
 # occupy a line-delimited field: paragraphs and tabs are valid sentence content.
 split_sentences() {
-    local records length
+    local records
     # Capture transactionally: a crashing Python process may already have
-    # printed records. Discard those before emitting the unsplit fallback.
+    # printed records. Discard those before emitting the native fallback.
     if [ -x "$VENV_PYTHON" ] && records=$(printf '%s' "$1" | "$VENV_PYTHON" -c "
 import base64, re, sys
 text = sys.stdin.read()
@@ -304,11 +304,27 @@ for p in parts:
 " 2>/dev/null) && [ -n "$records" ]; then
         printf '%s\n' "$records"
     else
-        # Match Python's Unicode-character offsets even under a C shell locale.
-        length=$(printf '%s' "$1" | /usr/bin/perl -MEncode=decode -0777 -ne 'print length decode("UTF-8", $_)')
-        printf '0\t%d\t' "$length"
-        printf '%s' "$1" | /usr/bin/base64 | tr -d '\r\n'
-        printf '\n'
+        # macOS includes Perl and these core modules. Keep sentence pauses
+        # functional without Python, retaining every character (including the
+        # whitespace between sentences) and Unicode-character offsets.
+        printf '%s' "$1" | /usr/bin/perl -MEncode=decode,encode -MMIME::Base64=encode_base64 -0777 -ne '
+            my $text = decode("UTF-8", $_);
+            my $protected = $text;
+            $protected =~ s/\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc)\. /$1 . "\0 "/ge;
+            $protected =~ s/\b([A-Z])\. /$1 . "\0 "/ge;
+            my $offset = 0;
+            my @ends;
+            while ($protected =~ /(?<=[.!?])\s+/g) { push @ends, pos($protected); }
+            push @ends, length($text) unless @ends && $ends[-1] == length($text);
+            for my $end (@ends) {
+                my $part = substr($text, $offset, $end - $offset);
+                if (length($part)) {
+                    print $offset, "\t", length($part), "\t",
+                          encode_base64(encode("UTF-8", $part), ""), "\n";
+                }
+                $offset = $end;
+            }
+        '
     fi
 }
 

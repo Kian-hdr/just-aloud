@@ -2314,9 +2314,9 @@ check "split: semicolons stay in sentence" \
 check "split: double space between sentences" \
     "2" "$(echo "$(_run_split "First.  Second.")" | wc -l | tr -d ' ')"
 
-# split_sentences has a fallback if python fails
-check "split_sentences has fallback on python failure" \
-    "yes" "$(awk '/^split_sentences\(\)/,/^}/' "$SPEAK_SH" | grep -q '/usr/bin/base64' && echo "yes" || echo "no")"
+# Exercise the actual no-Python fallback instead of matching its implementation.
+check "split_sentences preserves sentence boundaries without Python" \
+    "2" "$(VENV_PYTHON=/nonexistent/just-aloud-test-python; eval "$(awk '/^split_sentences\(\)/,/^}/' "$SPEAK_SH")"; split_sentences 'First. Second.' | wc -l | tr -d ' ')"
 
 # ── 46a2. Sentence splitting: quality ───────────────────────────
 

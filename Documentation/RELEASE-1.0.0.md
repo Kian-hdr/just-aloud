@@ -15,7 +15,7 @@ selected-text reader.
   usage row above it. Large balances compact without widening the menu.
 - Cached usage appears immediately. Background GET requests refresh usage after
   generation and when opening the menu; failures retain a labeled stale balance.
-- Fixed multi-paragraph truncation without Python, and visible errors for failed
+- Fixed multi-paragraph truncation and sentence pauses without Python, and visible errors for failed
   later synthesis chunks. Incomplete recordings never replace completed ones.
 - Adaptive icon, light/dark Welcome and About, Open at Login, and no automatic
   repeated Accessibility prompts.
