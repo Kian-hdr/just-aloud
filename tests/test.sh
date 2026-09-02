@@ -4447,8 +4447,17 @@ check "JustAloud.swift: Sentence Pause supports custom text input" \
 check "JustAloud.swift: menu-bar item explicitly restores visibility" \
     "yes" "$(grep -q 'statusItem.isVisible = true' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "JustAloud.swift: menu-bar identity is distinct from Speak11" \
-    "yes" "$(grep -q 'systemSymbolName: "play.circle.fill"' "$SETTINGS_SWIFT" && grep -q 'space.exlumina.justaloud.status-item' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+check "JustAloud.swift: menu-bar uses the requested waveform" \
+    "yes" "$(grep -q 'systemSymbolName: "waveform"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: menu-bar has a stable saved position" \
+    "yes" "$(grep -q 'statusItem.autosaveName = statusItemAutosaveName' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: menu-bar imports Speak11's visible position once" \
+    "yes" "$(grep -q 'func prepareStatusItemPosition' "$SETTINGS_SWIFT" && grep -q 'NSStatusItem Preferred Position com.speak11.status-item' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: menu-bar has a visible text fallback" \
+    "yes" "$(grep -q 'button.title = "JA"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 check "JustAloud.swift: launch never prompts for Accessibility" \
     "yes" "$(awk '/func applicationDidFinishLaunching/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'requestAccessibility' && echo "no" || echo "yes")"

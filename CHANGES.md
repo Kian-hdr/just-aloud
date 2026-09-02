@@ -10,8 +10,9 @@ Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
 - Stopped requesting Accessibility access automatically at launch. Permission
   prompting is now user-initiated and skips the prompt when access is already
   granted.
-- Restored the menu-bar item explicitly at launch and gave Just Aloud a
-  distinct native play-circle symbol instead of Speak11's waveform symbol.
+- Restored the menu-bar item explicitly at launch, retained the requested
+  native waveform symbol, and imported Speak11's known visible position once
+  so the item is not placed behind a MacBook notch or application menu.
 - Fixed sentence-pause timing so the selected milliseconds remain exact at
   every playback speed and are also honored by the `afplay` fallback.
 - Replaced the free-form-only pause control with a native preset submenu plus

@@ -4,8 +4,9 @@
 
 - Prevented recurring Accessibility dialogs by removing launch-time prompting
   and rechecking existing authorization before a user-initiated request.
-- Fixed a missing or hidden menu-bar item by restoring its visibility at
-  launch and assigning Just Aloud a distinct play-circle symbol.
+- Fixed a missing or obscured menu-bar item by restoring its visibility,
+  keeping the native waveform symbol, and importing Speak11's known visible
+  position once when available.
 - Fixed the sentence-pause control so the chosen duration is real elapsed
   silence rather than shrinking as playback speed increases.
 - Added clear pause presets, a validated custom value, live updates for active

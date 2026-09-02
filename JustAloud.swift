@@ -24,6 +24,8 @@ private let speechPIDPath = (NSTemporaryDirectory() as NSString)
     .appendingPathComponent("just_aloud_tts.pid")
 private let playbackStatePath = (NSTemporaryDirectory() as NSString)
     .appendingPathComponent("just_aloud_audio_state")
+private let statusItemAutosaveName = "space.exlumina.justaloud.status-item"
+private let statusItemPositionKey = "NSStatusItem Preferred Position \(statusItemAutosaveName)"
 private let welcomeCompletionKey = "welcomeCompleted"
 private let welcomeDefaults: UserDefaults = {
     if let suite = ProcessInfo.processInfo.environment["JUST_ALOUD_DEFAULTS_SUITE"],
@@ -343,16 +345,30 @@ private final class VoiceActionButton: NSButton {
     private var ttsDaemonProcess: Process?
 
     private func idleMenuBarImage() -> NSImage {
-        let image = NSImage(
-            systemSymbolName: "play.circle.fill",
-            accessibilityDescription: "Just Aloud") ?? NSImage()
-        image.isTemplate = true
-        return image
+        if let image = NSImage(
+            systemSymbolName: "waveform",
+            accessibilityDescription: "Just Aloud") {
+            image.isTemplate = true
+            return image
+        }
+        return NSImage()
+    }
+
+    private func prepareStatusItemPosition() {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: statusItemPositionKey) == nil,
+              let speak11Defaults = UserDefaults(suiteName: "com.speak11.menu"),
+              let position = speak11Defaults.object(
+                forKey: "NSStatusItem Preferred Position com.speak11.status-item") else {
+            return
+        }
+        defaults.set(position, forKey: statusItemPositionKey)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        prepareStatusItemPosition()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.autosaveName = "space.exlumina.justaloud.status-item"
+        statusItem.autosaveName = statusItemAutosaveName
         statusItem.isVisible = true
         if let button = statusItem.button {
             button.image = idleMenuBarImage()
@@ -360,6 +376,9 @@ private final class VoiceActionButton: NSButton {
             button.imageScaling = .scaleProportionallyDown
             button.toolTip = "Just Aloud"
             button.setAccessibilityLabel("Just Aloud menu")
+            if button.image?.isValid != true {
+                button.title = "JA"
+            }
         }
         appDelegateRef = self
         installStandardEditMenu()
