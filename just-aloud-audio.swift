@@ -71,6 +71,7 @@ func unmute() -> Bool {
 // Writes STATUS_FILE with: epoch\nduration\noffset\nsent_len\n
 
 private struct PlayItem {
+    let index: Int
     let file: AVAudioFile
     let duration: Double
     let rate: Float
@@ -106,6 +107,7 @@ class QueuePlayer: NSObject {
         }
 
         DispatchQueue.global().async { [self] in
+            var receivedItems = 0
             while let line = readLine() {
                 let parts = line.split(separator: "\t", maxSplits: 6, omittingEmptySubsequences: false)
                 guard parts.count >= 5 else { continue }
@@ -120,7 +122,9 @@ class QueuePlayer: NSObject {
                 let sourceDuration = Double(file.length) / file.processingFormat.sampleRate
                 let effectiveDuration = sourceDuration / Double(rate)
                 let pauseMs = parts.count >= 6 ? (Int(parts[5]) ?? 0) : 0
+                receivedItems += 1
                 let item = PlayItem(
+                    index: receivedItems,
                     file: file,
                     duration: effectiveDuration,
                     rate: rate,
@@ -171,7 +175,12 @@ class QueuePlayer: NSObject {
             self.play(item)
         }
 
-        let delay = Double(sentencePauseOverrideMs ?? item.pauseMs) / 1000.0
+        let effectivePause = sentencePauseOverrideMs ?? item.pauseMs
+        if let directory = ProcessInfo.processInfo.environment["JUST_ALOUD_RECORDING_DIR"] {
+            let path = URL(fileURLWithPath: directory).appendingPathComponent("pause-\(item.index).txt")
+            try? String(effectivePause).write(to: path, atomically: true, encoding: .utf8)
+        }
+        let delay = Double(effectivePause) / 1000.0
         if delay > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: startPlaying)
         } else {
@@ -333,6 +342,94 @@ func runPlayQueue() -> Never {
     exit(0)
 }
 
+// Offline export reads only already-generated local files. No provider calls.
+private struct RecordingChunk {
+    let url: URL
+    let rate: Float
+    let pauseMs: Int
+}
+
+private enum RecordingError: Error { case invalidManifest, renderFailed }
+
+private func recordingChunks(at directory: URL) throws -> [RecordingChunk] {
+    let manifest = try String(contentsOf: directory.appendingPathComponent("manifest.tsv"), encoding: .utf8)
+    let lines = manifest.split(separator: "\n")
+    guard !lines.isEmpty else { throw RecordingError.invalidManifest }
+    return try lines.enumerated().map { index, line in
+        let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+        let expectedName = "chunk-\(index + 1).audio"
+        guard fields.count == 3, fields[0] == expectedName,
+              let pause = Int(fields[1]), (0...5_000).contains(pause),
+              let rate = Float(fields[2]), rate.isFinite, (0.5...4).contains(rate)
+        else { throw RecordingError.invalidManifest }
+        let url = directory.appendingPathComponent(expectedName)
+        guard (try url.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink != true
+        else { throw RecordingError.invalidManifest }
+        let file = try AVAudioFile(forReading: url)
+        guard file.length > 0 else { throw RecordingError.invalidManifest }
+        let appliedPause = (try? String(contentsOf: directory.appendingPathComponent("pause-\(index + 1).txt"), encoding: .utf8)).flatMap(Int.init) ?? pause
+        return RecordingChunk(url: url, rate: rate,
+                              pauseMs: index == 0 ? 0 : min(max(appliedPause, 0), 5_000))
+    }
+}
+
+private func exportRecording(from directory: URL, to destination: URL) throws {
+    guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("complete").path),
+          !FileManager.default.fileExists(atPath: destination.path)
+    else { throw RecordingError.invalidManifest }
+    let chunks = try recordingChunks(at: directory)
+    let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+    let output = try AVAudioFile(forWriting: destination, settings: [
+        AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 44_100,
+        AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false
+    ])
+    let capacity: AVAudioFrameCount = 4096
+    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity)!
+    for chunk in chunks {
+        var silenceFrames = Int64((Double(chunk.pauseMs) * 44.1).rounded())
+        while silenceFrames > 0 {
+            buffer.frameLength = AVAudioFrameCount(min(Int64(capacity), silenceFrames))
+            memset(buffer.floatChannelData![0], 0, Int(buffer.frameLength) * MemoryLayout<Float>.size)
+            try output.write(from: buffer)
+            silenceFrames -= Int64(buffer.frameLength)
+        }
+        let source = try AVAudioFile(forReading: chunk.url)
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let pitch = AVAudioUnitTimePitch()
+        pitch.rate = chunk.rate
+        engine.attach(player)
+        engine.attach(pitch)
+        engine.connect(player, to: pitch, format: source.processingFormat)
+        engine.connect(pitch, to: engine.mainMixerNode, format: source.processingFormat)
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: capacity)
+        player.scheduleFile(source, at: nil)
+        try engine.start()
+        player.play()
+        defer { engine.stop() }
+        var remaining = Int64((Double(source.length) / source.processingFormat.sampleRate
+                               / Double(chunk.rate) * format.sampleRate).rounded())
+        var retries = 0
+        while remaining > 0 {
+            let count = AVAudioFrameCount(min(Int64(capacity), remaining))
+            let status = try engine.renderOffline(count, to: buffer)
+            switch status {
+            case .success:
+                guard buffer.frameLength > 0 else { throw RecordingError.renderFailed }
+                try output.write(from: buffer)
+                remaining -= Int64(buffer.frameLength)
+                retries = 0
+            case .cannotDoInCurrentContext:
+                retries += 1
+                if retries > 100 { throw RecordingError.renderFailed }
+            default:
+                throw RecordingError.renderFailed
+            }
+        }
+    }
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 
 guard CommandLine.arguments.count >= 2 else {
@@ -341,6 +438,22 @@ guard CommandLine.arguments.count >= 2 else {
 }
 
 switch CommandLine.arguments[1] {
+case "check-recording", "export-recording":
+    do {
+        guard CommandLine.arguments.count >= 3 else { throw RecordingError.invalidManifest }
+        let directory = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+        if CommandLine.arguments[1] == "check-recording" {
+            _ = try recordingChunks(at: directory)
+        } else {
+            guard CommandLine.arguments.count == 4 else { throw RecordingError.invalidManifest }
+            try exportRecording(from: directory, to: URL(fileURLWithPath: CommandLine.arguments[3]))
+        }
+        exit(0)
+    } catch {
+        // No transcript, voice identifier, credential, or private path in errors.
+        fputs("Recording could not be exported. The complete original audio is required.\n", stderr)
+        exit(1)
+    }
 case "is-muted":
     exit(isMuted() ? 0 : 1)
 case "unmute":

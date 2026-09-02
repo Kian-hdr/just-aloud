@@ -5,6 +5,10 @@ import Darwin
 import Security
 import ServiceManagement
 
+// Explicit offline UI inspection mode. Normal launches are unaffected. Release
+// screenshots use an isolated config/defaults suite and never real credentials.
+private let offlinePreview = ProcessInfo.processInfo.environment["JUST_ALOUD_OFFLINE_PREVIEW"] == "1"
+
 // MARK: - Config paths
 
 private let configDir: String = {
@@ -14,20 +18,26 @@ private let configDir: String = {
 }()
 private let configPath = (configDir as NSString).appendingPathComponent("config")
 private let speakPath: String = {
+    if let bundled = Bundle.main.path(forResource: "just-aloud", ofType: nil) { return bundled }
     let userInstall = (NSHomeDirectory() as NSString)
         .appendingPathComponent(".local/bin/just-aloud")
     if FileManager.default.isExecutableFile(atPath: userInstall) { return userInstall }
     return Bundle.main.path(forResource: "just-aloud", ofType: nil) ?? userInstall
 }()
-private let audioControlPath = (NSTemporaryDirectory() as NSString)
+private let playbackRuntimeDir: String = {
+    #if TESTING
+    if let directory = ProcessInfo.processInfo.environment["JUST_ALOUD_TEST_RUNTIME_DIR"],
+       !directory.isEmpty { return directory }
+    #endif
+    return NSTemporaryDirectory()
+}()
+private let audioControlPath = (playbackRuntimeDir as NSString)
     .appendingPathComponent("just_aloud_audio_control")
-private let speechPIDPath = (NSTemporaryDirectory() as NSString)
+private let speechPIDPath = (playbackRuntimeDir as NSString)
     .appendingPathComponent("just_aloud_tts.pid")
-private let playbackStatePath = (NSTemporaryDirectory() as NSString)
+private let playbackStatePath = (playbackRuntimeDir as NSString)
     .appendingPathComponent("just_aloud_audio_state")
-private let statusItemAutosaveName = "space.exlumina.justaloud.status-item"
-private let statusItemPositionKey = "NSStatusItem Preferred Position \(statusItemAutosaveName)"
-private let defaultVisibleStatusItemPosition = 560
+private let statusItemAutosaveName = "JustAloudMenuBar"
 private let welcomeCompletionKey = "welcomeCompleted"
 private let welcomeDefaults: UserDefaults = {
     if let suite = ProcessInfo.processInfo.environment["JUST_ALOUD_DEFAULTS_SUITE"],
@@ -204,16 +214,7 @@ private let localSpeedSteps: [(label: String, value: Double)] = [
     ("0.5×", 0.5), ("0.75×", 0.75), ("1×", 1.0), ("1.25×", 1.25), ("1.5×", 1.5), ("2×", 2.0),
 ]
 
-private let sentencePauseSteps: [(label: String, value: Int)] = [
-    ("None", 0),
-    ("Very Short — 250 ms", 250),
-    ("Natural — 400 ms", 400),
-    ("Short — 500 ms", 500),
-    ("Medium — 750 ms", 750),
-    ("Long — 1 second", 1_000),
-    ("Very Long — 1.5 seconds", 1_500),
-    ("Extra Long — 2 seconds", 2_000),
-]
+private let sentencePauseSliderStep = 50.0
 
 private let stabilitySteps: [(label: String, value: Double)] = [
     ("0.0 — expressive", 0.0), ("0.25", 0.25), ("0.5 — default", 0.5),
@@ -311,6 +312,105 @@ private let hotkeyCallback: CGEventTapCallBack = { _, type, event, _ in
 
 // MARK: - App delegate
 
+// ElevenLabs retains the legacy character_* field names for subscription usage.
+// This read-only response is deliberately independent of the synthesis pipeline.
+private struct CreditUsageResponse: Decodable {
+    let used: Int
+    let limit: Int?
+    enum CodingKeys: String, CodingKey {
+        case used = "character_count"
+        case limit = "character_limit"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        used = try values.decode(Int.self, forKey: .used)
+        limit = try values.decodeIfPresent(Int.self, forKey: .limit)
+        guard used >= 0, limit.map({ $0 >= 0 }) ?? true else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Negative credit usage or allowance"))
+        }
+    }
+
+    static func title(used: Int, limit: Int?, stale: Bool) -> String {
+        let number = NumberFormatter()
+        number.locale = Locale(identifier: "en_US")
+        number.numberStyle = .decimal
+        let usedText = number.string(from: NSNumber(value: used)) ?? "\(used)"
+        let limitText = limit.flatMap { number.string(from: NSNumber(value: $0)) } ?? "N/A"
+        let percent: String
+        if let limit, limit > 0 {
+            // Convert before arithmetic: no integer overflow or division by zero.
+            percent = String(format: "%.1f%%", locale: Locale(identifier: "en_US_POSIX"),
+                             Double(used) / Double(limit) * 100)
+        } else {
+            percent = "N/A"
+        }
+        return "Credits: \(usedText) / \(limitText) used · \(percent)" + (stale ? " · stale" : "")
+    }
+
+    static func compactTitle(used: Int, limit: Int?, stale: Bool, digits: Int = 2) -> String {
+        func compact(_ value: Int) -> String {
+            for (divisor, suffix) in [(1e18, "E"), (1e15, "P"), (1e12, "T"),
+                                      (1e9, "B"), (1e6, "M"), (1e3, "K")] {
+                if Double(value) >= divisor {
+                    return String(format: "%.*f%@", locale: Locale(identifier: "en_US_POSIX"),
+                                  digits, Double(value) / divisor, suffix)
+                }
+            }
+            return String(value)
+        }
+        let percent: String
+        if let limit, limit > 0 {
+            let value = Double(used) / Double(limit) * 100
+            percent = String(format: value >= 1e6 ? "%.1e%%" : "%.1f%%",
+                             locale: Locale(identifier: "en_US_POSIX"), value)
+        } else {
+            percent = "N/A"
+        }
+        return "Credits: \(compact(used)) / \(limit.map(compact) ?? "N/A") used · \(percent)" +
+            (stale ? " · stale" : "")
+    }
+}
+
+#if TESTING
+private final class CreditUsageStubProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var pending: [CreditUsageStubProtocol] = []
+    private static var requests: [URLRequest] = []
+    static var recordedRequests: [URLRequest] {
+        lock.lock(); defer { lock.unlock() }; return requests
+    }
+    static var pendingCount: Int {
+        lock.lock(); defer { lock.unlock() }; return pending.count
+    }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        Self.requests.append(request)
+        Self.pending.append(self)
+    }
+    override func stopLoading() {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        Self.pending.removeAll { $0 === self }
+    }
+    static func finish(status: Int = 200, json: String = "", error: Error? = nil) {
+        lock.lock()
+        let task = pending.removeFirst()
+        lock.unlock()
+        if let error {
+            task.client?.urlProtocol(task, didFailWithError: error)
+        } else {
+            let response = HTTPURLResponse(url: task.request.url!, statusCode: status,
+                                           httpVersion: "HTTP/1.1", headerFields: nil)!
+            task.client?.urlProtocol(task, didReceive: response, cacheStoragePolicy: .notAllowed)
+            task.client?.urlProtocol(task, didLoad: Data(json.utf8))
+            task.client?.urlProtocolDidFinishLoading(task)
+        }
+    }
+}
+#endif
+
 private final class VoiceActionButton: NSButton {
     var voiceId = ""
 }
@@ -319,10 +419,23 @@ private final class VoiceActionButton: NSButton {
     private var statusItem: NSStatusItem!
     private var config         = Config.load()
     private var accessTimer: Timer?
+    private var didRequestAccessibilityThisSession = false
     private var animTimer:   Timer?
     private var animPhase:   Double = 0
     private var indicatorMode = "idle"
     private var playbackMonitorTimer: Timer?
+    private var recordingTimer: Timer?
+    private let recordingRoot = URL(fileURLWithPath: playbackRuntimeDir)
+        .appendingPathComponent("just-aloud-recordings", isDirectory: true)
+    private var latestRecording: URL?
+    private var currentRecording: URL?
+    private var queuedDownload: URL?
+    private var exportingRecording: URL?
+    private var exportProcess: Process?
+    private var isQuitting = false
+    private weak var downloadButton: NSButton?
+    private var downloadPopover: NSPopover?
+    private var lastDownloadedFile: URL?
 
     // Respeak state — synchronized via speakLock
     private var speakGeneration = 0
@@ -335,7 +448,19 @@ private final class VoiceActionButton: NSButton {
     private let speakLock = NSLock()
 
     // Credits cache (fetched from ElevenLabs API)
-    private var cachedCredits: (used: Int, limit: Int, fetchedAt: Date)?
+    private var cachedCredits: (used: Int, limit: Int?, fetchedAt: Date)?
+    private var creditsRefreshFailed = false
+    private var creditsTask: URLSessionDataTask?
+    private var creditsRefreshPending = false
+    private var creditsRequestID = 0
+    private var creditsKeyInUse: String?
+    private var creditsSession = URLSession(configuration: .ephemeral)
+    private var creditObservedRecording: URL?
+    private var creditObservedSpeechActive = false
+    #if TESTING
+    // Test builds never read a real credential for usage checks.
+    private var testCreditsAPIKey: String?
+    #endif
     private var voiceNameFetchesInFlight = Set<String>()
     private var voiceNameFetchFailures = Set<String>()
     private var cloudVoiceIndicators: [String: NSImageView] = [:]
@@ -347,13 +472,6 @@ private final class VoiceActionButton: NSButton {
     private var ttsDaemonProcess: Process?
 
     private func idleMenuBarImage() -> NSImage {
-        if let path = Bundle.main.path(forResource: "menu-bar-template", ofType: "svg"),
-           let image = NSImage(contentsOfFile: path) {
-            image.size = NSSize(width: 18, height: 18)
-            image.isTemplate = true
-            image.accessibilityDescription = "Just Aloud"
-            return image
-        }
         if let image = NSImage(
             systemSymbolName: "waveform",
             accessibilityDescription: "Just Aloud") {
@@ -362,28 +480,26 @@ private final class VoiceActionButton: NSButton {
             configured.isTemplate = true
             return configured
         }
+        if let path = Bundle.main.path(forResource: "menu-bar-template", ofType: "svg"),
+           let image = NSImage(contentsOfFile: path) {
+            image.size = NSSize(width: 18, height: 18)
+            image.isTemplate = true
+            image.accessibilityDescription = "Just Aloud"
+            return image
+        }
         return NSImage()
     }
 
-    private func prepareStatusItemPosition() {
-        // NSStatusItem stores this value as distance from the right edge. Keep
-        // the initial item clear of the system cluster while preserving any
-        // position the user later chooses with Command-drag.
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: statusItemPositionKey) == nil {
-            defaults.set(defaultVisibleStatusItemPosition, forKey: statusItemPositionKey)
-        }
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
-        prepareStatusItemPosition()
-        statusItem = NSStatusBar.system.statusItem(withLength: 28)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.autosaveName = statusItemAutosaveName
         statusItem.isVisible = true
         if let button = statusItem.button {
             button.image = idleMenuBarImage()
             button.imagePosition = .imageOnly
-            button.imageScaling = .scaleNone
+            button.imageScaling = .scaleProportionallyDown
+            button.alphaValue = 1
+            button.isHidden = false
             button.toolTip = "Just Aloud"
             button.setAccessibilityLabel("Just Aloud menu")
             if button.image?.isValid != true {
@@ -393,6 +509,7 @@ private final class VoiceActionButton: NSButton {
         appDelegateRef = self
         installStandardEditMenu()
         installHotkey()
+        if !AXIsProcessTrusted() { startAccessibilityPolling() }
         refreshVoiceNames(force: true)
         rebuildMenu()
         let showWelcome = shouldShowWelcomeOnLaunch
@@ -404,6 +521,12 @@ private final class VoiceActionButton: NSButton {
         playbackMonitorTimer = monitor
         RunLoop.main.add(monitor, forMode: .common)
         refreshPlaybackIndicator()
+        refreshRecordings()
+        let recordings = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.refreshRecordings()
+        }
+        recordingTimer = recordings
+        RunLoop.main.add(recordings, forMode: .common)
         if showWelcome {
             DispatchQueue.main.async { [weak self] in self?.showWelcome() }
         } else if ProcessInfo.processInfo.environment["JUST_ALOUD_SHOW_ABOUT"] == "1" {
@@ -418,8 +541,29 @@ private final class VoiceActionButton: NSButton {
         return !welcomeDefaults.bool(forKey: welcomeCompletionKey)
     }
 
+    // Opening the app again from Finder should reveal its controls, not appear
+    // to do nothing just because this is a menu-bar-only application.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { showPlaybackControls() }
+        return true
+    }
+
     private func installStandardEditMenu() {
         let mainMenu = NSMenu()
+        let applicationRoot = NSMenuItem(title: "Just Aloud", action: nil, keyEquivalent: "")
+        let applicationMenu = NSMenu(title: "Just Aloud")
+        for (title, action) in [("About Just Aloud", #selector(showAbout)),
+                                ("Welcome & Setup…", #selector(showWelcome)),
+                                ("Show Playback Controls", #selector(showPlaybackControls))] {
+            let command = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            command.target = self
+            applicationMenu.addItem(command)
+        }
+        applicationMenu.addItem(.separator())
+        applicationMenu.addItem(NSMenuItem(title: "Quit Just Aloud",
+            action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        applicationRoot.submenu = applicationMenu
+        mainMenu.addItem(applicationRoot)
         let editRoot = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         let editMenu = NSMenu(title: "Edit")
         let undo = NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -441,10 +585,25 @@ private final class VoiceActionButton: NSButton {
         NSApp.mainMenu = mainMenu
     }
 
+    @objc private func showPlaybackControls() {
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async { [weak self] in self?.statusItem.button?.performClick(nil) }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        isQuitting = true
+        creditsTask?.cancel()
+        recordingTimer?.invalidate()
+        if let exportProcess, exportProcess.isRunning { exportProcess.terminate() }
+        accessTimer?.invalidate()
         playbackMonitorTimer?.invalidate()
         killCurrentProcess()
         stopTTSDaemon()
+        terminateExternalSpeech()
+        // Only this application's private temporary recordings, never Downloads.
+        if (try? recordingRoot.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true {
+            try? FileManager.default.removeItem(at: recordingRoot)
+        }
     }
 
     // Re-read config every time the menu opens so we pick up changes from
@@ -494,7 +653,9 @@ private final class VoiceActionButton: NSButton {
     }
 
     private func refreshPlaybackIndicator() {
-        guard isSpeechActive,
+        let speechActive = isSpeechActive
+        observeSpeechActivityForCredits(speechActive)
+        guard speechActive,
               let rawState = try? String(contentsOfFile: playbackStatePath, encoding: .utf8) else {
             isPlaybackPaused = false
             setSpeaking(false)
@@ -542,6 +703,7 @@ private final class VoiceActionButton: NSButton {
     // MARK: - Hotkey
 
     func handleHotkey() {
+        guard !offlinePreview else { return }
         speakLock.lock()
         let speaking = isSpeakingFlag
         speakLock.unlock()
@@ -585,15 +747,19 @@ private final class VoiceActionButton: NSButton {
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 
-    // Poll until Accessibility is granted (e.g. after user clicks Allow).
+    // Observe grants made directly in System Settings, without prompting.
     private func startAccessibilityPolling() {
-        accessTimer?.invalidate()
-        accessTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
+        guard accessTimer == nil else { return }
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] t in
+            guard let self else { t.invalidate(); return }
             guard AXIsProcessTrusted() else { return }
             t.invalidate()
-            self?.installHotkey()
-            self?.rebuildMenu()
+            self.accessTimer = nil
+            self.installHotkey()
+            self.rebuildMenu()
         }
+        accessTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     @objc private func requestAccessibility() {
@@ -602,9 +768,14 @@ private final class VoiceActionButton: NSButton {
             rebuildMenu()
             return
         }
-        let key  = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let opts = [key: true] as CFDictionary
-        AXIsProcessTrustedWithOptions(opts)
+        // Never repeatedly trigger the system alert during one app session.
+        if !didRequestAccessibilityThisSession {
+            didRequestAccessibilityThisSession = true
+            let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+            AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        } else if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
         startAccessibilityPolling()
     }
 
@@ -706,6 +877,7 @@ private final class VoiceActionButton: NSButton {
 
             DispatchQueue.main.async {
                 if currentGen == gen { self.setSpeaking(false) }
+                self.fetchCredits(afterGeneration: true)
             }
         }
     }
@@ -784,6 +956,7 @@ private final class VoiceActionButton: NSButton {
     }
 
     private func updateTTSDaemon() {
+        guard !offlinePreview else { return }
         if needsDaemon {
             startTTSDaemon()
         } else {
@@ -868,14 +1041,17 @@ private final class VoiceActionButton: NSButton {
     }
 
     private func buildMediaControlsItem() -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 252, height: 52))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 52))
         let back = mediaButton(symbol: "gobackward.10", pointSize: 18, label: "Back 10 seconds", action: #selector(seekBackward))
         let playPause = mediaButton(symbol: isPlaybackPaused ? "play.circle.fill" : "pause.circle.fill", pointSize: 25, label: isPlaybackPaused ? "Resume" : "Pause", action: #selector(togglePlaybackPause))
         let forward = mediaButton(symbol: "goforward.10", pointSize: 18, label: "Forward 10 seconds", action: #selector(seekForward))
         let stop = mediaButton(symbol: "stop.fill", pointSize: 15, label: "Stop", action: #selector(stopPlayback))
         playPauseButton = playPause
         playbackButtons = [back, playPause, forward, stop]
-        let stack = NSStackView(views: playbackButtons)
+        let download = mediaButton(symbol: "arrow.down.to.line", pointSize: 18,
+                                   label: "Download recording", action: #selector(downloadRecording))
+        downloadButton = download
+        let stack = NSStackView(views: playbackButtons + [download])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 12
@@ -893,6 +1069,11 @@ private final class VoiceActionButton: NSButton {
 
     private func updateMediaControls() {
         playbackButtons.forEach { $0.isEnabled = isSpeechActive }
+        downloadButton?.isEnabled = exportProcess == nil && queuedDownload == nil &&
+            (currentRecording != nil || latestRecording != nil)
+        downloadButton?.toolTip = exportProcess != nil ? "Saving recording…" :
+            queuedDownload != nil ? "Download queued until generation finishes" :
+            "Download the complete recording to Downloads without using more credits"
         let symbol = isPlaybackPaused ? "play.circle.fill" : "pause.circle.fill"
         let label = isPlaybackPaused ? "Resume" : "Pause"
         let configuration = NSImage.SymbolConfiguration(pointSize: 25, weight: .medium)
@@ -901,6 +1082,220 @@ private final class VoiceActionButton: NSButton {
         playPauseButton?.toolTip = label
         playPauseButton?.setAccessibilityLabel(label)
     }
+
+    // MARK: - Retained recordings and explicit offline downloads
+
+    private func refreshRecordings() {
+        guard !isQuitting else { return }
+        let fm = FileManager.default
+        guard (try? recordingRoot.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
+        else { return }
+        let folders = (try? fm.contentsOfDirectory(at: recordingRoot,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey])) ?? []
+        let sessions = folders.filter {
+            $0.lastPathComponent.hasPrefix("recording.") &&
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true &&
+            (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
+        }
+        let completed = sessions.filter { fm.fileExists(atPath: $0.appendingPathComponent("complete").path) }
+        latestRecording = completed.max {
+            let a = (try? $0.appendingPathComponent("complete").resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let b = (try? $1.appendingPathComponent("complete").resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return a < b
+        }
+        observeCompletedRecordingForCredits(latestRecording)
+        let name = (try? String(contentsOf: recordingRoot.appendingPathComponent("current"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        currentRecording = sessions.first { $0.lastPathComponent == name }
+        if let requested = queuedDownload {
+            if completed.contains(requested) {
+                queuedDownload = nil
+                exportRecording(requested)
+            } else if !sessions.contains(requested) {
+                queuedDownload = nil
+                showDownloadNotice("Recording was not completed. No download was saved.")
+            }
+        }
+        // A new partial or failed request must never discard the last success.
+        for old in completed where old != latestRecording && old != exportingRecording {
+            try? fm.removeItem(at: old)
+        }
+        updateMediaControls()
+    }
+
+    @objc private func downloadRecording() {
+        guard exportProcess == nil, queuedDownload == nil else { return }
+        refreshRecordings()
+        guard let recording = currentRecording ?? latestRecording else { return }
+        if FileManager.default.fileExists(atPath: recording.appendingPathComponent("complete").path) {
+            exportRecording(recording)
+        } else {
+            queuedDownload = recording
+            updateMediaControls()
+            showDownloadNotice("Download queued. It will save when the full recording has been generated.")
+        }
+    }
+
+    private func exportRecording(_ recording: URL) {
+        guard !isQuitting, exportProcess == nil else { return }
+        var helper = Bundle.main.path(forResource: "just-aloud-audio", ofType: nil) ??
+            ((speakPath as NSString).deletingLastPathComponent as NSString).appendingPathComponent("just-aloud-audio")
+        #if TESTING
+        helper = ProcessInfo.processInfo.environment["JUST_ALOUD_TEST_EXPORT_HELPER"] ?? helper
+        #endif
+        let output = recordingRoot.appendingPathComponent("export-\(UUID().uuidString).wav")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: helper)
+        process.arguments = ["export-recording", recording.path, output.path]
+        process.environment = ["PATH": "/usr/bin:/bin", "TMPDIR": NSTemporaryDirectory()]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        exportingRecording = recording
+        exportProcess = process
+        do { try process.run() } catch {
+            exportProcess = nil
+            exportingRecording = nil
+            showDownloadNotice("Could not export the recording. Your original audio is still available.")
+            return
+        }
+        updateMediaControls()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            process.waitUntilExit()
+            DispatchQueue.main.async {
+                guard let self, !self.isQuitting else { return }
+                self.exportProcess = nil
+                self.exportingRecording = nil
+                defer {
+                    try? FileManager.default.removeItem(at: output)
+                    self.updateMediaControls()
+                }
+                guard process.terminationStatus == 0 else {
+                    self.showDownloadNotice("Could not export the full recording. Your original audio is still available.")
+                    return
+                }
+                do {
+                    var downloads = try FileManager.default.url(for: .downloadsDirectory,
+                        in: .userDomainMask, appropriateFor: nil, create: true)
+                    #if TESTING
+                    if let path = ProcessInfo.processInfo.environment["JUST_ALOUD_TEST_DOWNLOADS"] {
+                        downloads = URL(fileURLWithPath: path)
+                    }
+                    #endif
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "yyyy-MM-dd HH-mm-ss"
+                    let name = "Just Aloud \(formatter.string(from: Date())) \(UUID().uuidString.prefix(8)).wav"
+                    let destination = downloads.appendingPathComponent(name)
+                    // Exclusive move: never overwrite an existing user download.
+                    try FileManager.default.moveItem(at: output, to: destination)
+                    self.lastDownloadedFile = destination
+                    self.showDownloadNotice("Recording saved to Downloads.", reveal: true)
+                } catch {
+                    self.showDownloadNotice("Could not save to Downloads. Check folder access and free disk space, then try again.")
+                }
+            }
+        }
+    }
+
+    private func showDownloadNotice(_ message: String, reveal: Bool = false) {
+        guard let button = statusItem?.button else { return }
+        statusItem.menu?.cancelTracking()
+        downloadPopover?.close()
+        let controller = NSViewController()
+        controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: reveal ? 100 : 76))
+        let label = NSTextField(wrappingLabelWithString: message)
+        label.frame = NSRect(x: 16, y: reveal ? 42 : 16, width: 248, height: 44)
+        label.font = .systemFont(ofSize: 13)
+        controller.view.addSubview(label)
+        if reveal {
+            let revealButton = NSButton(title: "Show in Finder", target: self, action: #selector(revealDownload))
+            revealButton.frame = NSRect(x: 16, y: 10, width: 140, height: 28)
+            revealButton.bezelStyle = .rounded
+            controller.view.addSubview(revealButton)
+        }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = controller
+        downloadPopover = popover
+        DispatchQueue.main.async {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak popover] in popover?.close() }
+    }
+
+    @objc private func revealDownload() {
+        if let url = lastDownloadedFile { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        downloadPopover?.close()
+    }
+
+    #if TESTING
+    func testRecordingLifecycle() throws {
+        let fm = FileManager.default
+        let env = ProcessInfo.processInfo.environment
+        guard let testRoot = env["JUST_ALOUD_TEST_RUNTIME_DIR"],
+              let downloadPath = env["JUST_ALOUD_TEST_DOWNLOADS"],
+              let fixture = env["JUST_ALOUD_TEST_AUDIO"] else { fatalError("Isolated test paths required") }
+        precondition(downloadPath.hasPrefix(testRoot + "/"))
+        precondition(configDir.hasPrefix(testRoot + "/"))
+        precondition(!fm.fileExists(atPath: speechPIDPath))
+        let downloads = URL(fileURLWithPath: downloadPath)
+        try fm.createDirectory(at: downloads, withIntermediateDirectories: true)
+        try fm.createDirectory(at: recordingRoot, withIntermediateDirectories: true)
+        func session(_ name: String, complete: Bool) throws -> URL {
+            let folder = recordingRoot.appendingPathComponent("recording." + name, isDirectory: true)
+            try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+            try fm.copyItem(at: URL(fileURLWithPath: fixture), to: folder.appendingPathComponent("chunk-1.audio"))
+            try "chunk-1.audio\t0\t1\n".write(to: folder.appendingPathComponent("manifest.tsv"), atomically: true, encoding: .utf8)
+            try "".write(to: folder.appendingPathComponent(complete ? "complete" : "pending"), atomically: true, encoding: .utf8)
+            try folder.lastPathComponent.write(to: recordingRoot.appendingPathComponent("current"), atomically: true, encoding: .utf8)
+            return try fm.contentsOfDirectory(at: recordingRoot, includingPropertiesForKeys: nil)
+                .first { $0.lastPathComponent == folder.lastPathComponent }!
+        }
+        var checks = 0
+        func check(_ condition: Bool) {
+            precondition(condition, "Recording lifecycle check \(checks + 1)")
+            checks += 1
+        }
+        func waitForExport() {
+            let deadline = Date().addingTimeInterval(30)
+            while exportProcess != nil && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            }
+            check(exportProcess == nil)
+        }
+        let old = try session("old", complete: true)
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -10)], ofItemAtPath: old.appendingPathComponent("complete").path)
+        refreshRecordings()
+        check(latestRecording == old)
+        let pending = try session("pending", complete: false)
+        refreshRecordings()
+        check(latestRecording == old && currentRecording == pending)
+        check(try fm.contentsOfDirectory(atPath: downloadPath).isEmpty)
+        downloadRecording()
+        check(queuedDownload == pending && exportProcess == nil)
+        check(fm.fileExists(atPath: old.path))
+        try "".write(to: pending.appendingPathComponent("complete"), atomically: true, encoding: .utf8)
+        refreshRecordings()
+        check(queuedDownload == nil)
+        waitForExport()
+        check(try fm.contentsOfDirectory(atPath: downloadPath).count == 1)
+        check(!fm.fileExists(atPath: old.path) && latestRecording == pending)
+        let failed = try session("failed", complete: false)
+        refreshRecordings()
+        downloadRecording()
+        try fm.removeItem(at: failed)
+        refreshRecordings()
+        check(queuedDownload == nil && latestRecording == pending)
+        check(try fm.contentsOfDirectory(atPath: downloadPath).count == 1)
+        downloadRecording()
+        waitForExport()
+        check(try fm.contentsOfDirectory(atPath: downloadPath).count == 2)
+        applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        check(!fm.fileExists(atPath: recordingRoot.path))
+        check(try fm.contentsOfDirectory(atPath: downloadPath).count == 2)
+        print("PASS: \(checks) recording retention, queued download, repeat download, failure, and quit checks")
+    }
+    #endif
 
     func calculateRemainingText() -> String? {
         let tmpDir = NSTemporaryDirectory()
@@ -1015,18 +1410,22 @@ private final class VoiceActionButton: NSButton {
 
     private func saveAPIKey(_ key: String) {
         saveKeychainData(Data(key.utf8), account: "just-aloud", service: "just-aloud-api-key")
+        resetCreditsForCredentialChange()
     }
 
     private func deleteAPIKey() {
+        guard !offlinePreview else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: "just-aloud",
             kSecAttrService as String: "just-aloud-api-key",
         ]
         SecItemDelete(query as CFDictionary)
+        resetCreditsForCredentialChange()
     }
 
     private func keychainData(account: String, service: String) -> Data? {
+        guard !offlinePreview else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: account,
@@ -1040,6 +1439,7 @@ private final class VoiceActionButton: NSButton {
     }
 
     private func saveKeychainData(_ data: Data, account: String, service: String) {
+        guard !offlinePreview else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: account,
@@ -1056,15 +1456,18 @@ private final class VoiceActionButton: NSButton {
 
     // MARK: - Menu
 
+    private weak var creditsMenuItem: NSMenuItem?
+    private weak var creditsStatusLabel: NSTextField?
+
     private func rebuildMenu() {
+        statusItem.menu = buildPlaybackMenu()
+    }
+
+    private func buildPlaybackMenu() -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
 
         menu.addItem(buildMediaControlsItem())
-        menu.addItem(.separator())
-
-        // Backend submenu — always visible so users can discover and switch
-        menu.addItem(submenuItem("Backend", items: buildBackendItems()))
         menu.addItem(.separator())
 
         let showEl      = config.ttsBackend == "auto" || config.ttsBackend == "elevenlabs"
@@ -1077,70 +1480,60 @@ private final class VoiceActionButton: NSButton {
             if showHeaders { menu.addItem(hintItem("ElevenLabs")) }
             menu.addItem(submenuItem("Voice", items: buildVoiceItems()))
             menu.addItem(buildElSpeedSliderItem())
-            menu.addItem(submenuItem("Model", items: buildModelItems()))
-            menu.addItem(submenuItem("Stability", items: buildStabilityItems()))
-            menu.addItem(submenuItem("Similarity", items: buildSimilarityItems()))
-            menu.addItem(submenuItem("Style", items: buildStyleItems()))
-            let boost = NSMenuItem(
-                title:  "Speaker Boost",
-                action: #selector(toggleSpeakerBoost),
-                keyEquivalent: "")
-            boost.target = self
-            boost.state = config.useSpeakerBoost ? .on : .off
-            menu.addItem(boost)
-            menu.addItem(.separator())
         }
 
         // ── Local (Kokoro) section ──
         if showLocal {
-            if showHeaders { menu.addItem(hintItem("Local (Kokoro)")) }
+            if showHeaders {
+                menu.addItem(.separator())
+                menu.addItem(hintItem("Local (Kokoro)"))
+            }
             menu.addItem(submenuItem("Voice", items: buildLocalVoiceItems()))
             menu.addItem(submenuItem("Speed", items: buildLocalSpeedItems()))
-            menu.addItem(.separator())
         }
 
         // Playback-level setting shared by all backends. The selected value is
         // real elapsed silence and does not shrink at faster playback speeds.
-        menu.addItem(submenuItem(
-            "Sentence Pause: \(config.sentencePause) ms",
-            items: buildSentencePauseItems()))
+        menu.addItem(buildSentencePauseSliderItem())
         menu.addItem(.separator())
 
-        // API Key + Credits — when ElevenLabs is active
-        if showEl {
-            // Credits display (hidden until successfully fetched)
-            let creditsItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            creditsItem.tag = 999
-            creditsItem.isEnabled = false
-            creditsItem.isHidden = true
-            menu.addItem(creditsItem)
+        menu.addItem(buildCreditsStatusItem())
+        menu.addItem(submenuItem("Settings", items: buildSettingsItems(showElevenLabs: showEl)))
 
-            let apiItem = NSMenuItem(
-                title:  "API Key\u{2026}",
-                action: #selector(manageAPIKey),
-                keyEquivalent: "")
-            apiItem.target = self
-            menu.addItem(apiItem)
-        }
-
-        menu.addItem(.separator())
-
-        if !AXIsProcessTrusted() {
-            let warn = NSMenuItem(
-                title:          "⚠️  Enable Accessibility for ⌥⇧/",
-                action:         #selector(requestAccessibility),
-                keyEquivalent:  "")
-            warn.target = self
-            menu.addItem(warn)
-            menu.addItem(.separator())
-        }
-
+        // Permission setup stays in the welcome window, not as a persistent
+        // warning in the everyday playback menu.
         let about = NSMenuItem(title: "About Just Aloud",
                                action: #selector(showAbout),
                                keyEquivalent: "")
         about.target = self
         menu.addItem(about)
+        menu.addItem(.separator())
 
+        let quit = NSMenuItem(title: "Quit Just Aloud",
+                              action: #selector(NSApplication.terminate(_:)),
+                              keyEquivalent: "q")
+        menu.addItem(quit)
+        return menu
+    }
+
+    private func buildSettingsItems(showElevenLabs showEl: Bool) -> [NSMenuItem] {
+        // One configuration menu for every engine. No extra "advanced" layer.
+        var items = [submenuItem("Speech Engine", items: buildBackendItems())]
+        if showEl {
+            items += [
+                submenuItem("Model", items: buildModelItems()),
+                submenuItem("Stability", items: buildStabilityItems()),
+                submenuItem("Similarity", items: buildSimilarityItems()),
+                .separator()
+            ]
+
+            let apiItem = NSMenuItem(title: "API Key\u{2026}",
+                                    action: #selector(manageAPIKey), keyEquivalent: "")
+            apiItem.target = self
+            items.append(apiItem)
+
+        }
+        items.append(.separator())
         let openAtLogin = NSMenuItem(title: "Open at Login",
                                      action: #selector(toggleOpenAtLogin),
                                      keyEquivalent: "")
@@ -1149,13 +1542,30 @@ private final class VoiceActionButton: NSButton {
         openAtLogin.toolTip = openAtLoginState == .mixed
             ? "Approval is required in System Settings"
             : nil
-        menu.addItem(openAtLogin)
+        items.append(openAtLogin)
+        return items
+    }
 
-        let quit = NSMenuItem(title: "Quit Just Aloud",
-                              action: #selector(NSApplication.terminate(_:)),
-                              keyEquivalent: "q")
-        menu.addItem(quit)
-        statusItem.menu = menu
+    private func buildCreditsStatusItem() -> NSMenuItem {
+        let title = "Credits unavailable"
+        // A long NSMenuItem title can widen the native menu even with a custom
+        // view. Keep this structural title short; the label carries the status.
+        let item = NSMenuItem(title: "Credits", action: nil, keyEquivalent: "")
+        item.tag = 999
+        item.isEnabled = false
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 26))
+        let label = NSTextField(labelWithString: title)
+        label.frame = NSRect(x: 18, y: 5, width: 244, height: 16)
+        label.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.autoresizingMask = [.width]
+        view.addSubview(label)
+        item.view = view
+        creditsMenuItem = item
+        creditsStatusLabel = label
+        renderCreditsStatus()
+        return item
     }
 
     // MARK: Menu builders
@@ -1320,7 +1730,10 @@ private final class VoiceActionButton: NSButton {
 
         let reset = NSButton(title: "Reset", target: self, action: #selector(resetSpeed(_:)))
         reset.frame = NSRect(x: 214, y: 36, width: 54, height: 24)
-        reset.bezelStyle = .inline
+        reset.autoresizingMask = [.minXMargin]
+        reset.bezelStyle = .recessed
+        reset.isBordered = false
+        reset.contentTintColor = .labelColor
         reset.font = NSFont.menuFont(ofSize: 11)
         view.addSubview(reset)
 
@@ -1330,6 +1743,7 @@ private final class VoiceActionButton: NSButton {
                               target: self,
                               action: #selector(speedSliderChanged(_:)))
         slider.frame = NSRect(x: 40, y: 12, width: 198, height: 22)
+        slider.autoresizingMask = [.width]
         slider.isContinuous = true
         slider.altIncrementValue = speedStep
         slider.setAccessibilityLabel("Just Aloud playback speed")
@@ -1344,6 +1758,7 @@ private final class VoiceActionButton: NSButton {
 
         let fast = NSTextField(labelWithString: "3×")
         fast.frame = NSRect(x: 242, y: 14, width: 28, height: 16)
+        fast.autoresizingMask = [.minXMargin]
         fast.font = NSFont.menuFont(ofSize: 10)
         fast.textColor = .secondaryLabelColor
         view.addSubview(fast)
@@ -1359,20 +1774,349 @@ private final class VoiceActionButton: NSButton {
         }
     }
 
-    private func buildSentencePauseItems() -> [NSMenuItem] {
-        var items = sentencePauseSteps.map { step in
-            item(step.label, #selector(pickSentencePause(_:)),
-                 repr: String(step.value), on: step.value == config.sentencePause)
+    private func buildSentencePauseSliderItem() -> NSMenuItem {
+        let menuItem = NSMenuItem()
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 66))
+        let value = min(max(config.sentencePause, 0), 5_000)
+
+        let title = NSTextField(labelWithString: "Sentence Pause")
+        title.frame = NSRect(x: 18, y: 40, width: 140, height: 18)
+        title.font = NSFont.menuFont(ofSize: 13)
+        view.addSubview(title)
+
+        let valueButton = NSButton(title: "\(value) ms", target: self,
+                                   action: #selector(editSentencePause))
+        valueButton.frame = NSRect(x: 170, y: 36, width: 98, height: 24)
+        valueButton.autoresizingMask = [.minXMargin]
+        valueButton.bezelStyle = .recessed
+        valueButton.isBordered = false
+        valueButton.contentTintColor = .labelColor
+        valueButton.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        valueButton.tag = 4201
+        valueButton.toolTip = "Enter an exact sentence pause in milliseconds"
+        valueButton.setAccessibilityLabel("Enter exact sentence pause")
+        valueButton.setAccessibilityValueDescription("\(value) milliseconds")
+        view.addSubview(valueButton)
+
+        let slider = NSSlider(value: Double(value), minValue: 0, maxValue: 5_000,
+                              target: self, action: #selector(sentencePauseSliderChanged(_:)))
+        slider.frame = NSRect(x: 40, y: 12, width: 198, height: 22)
+        slider.autoresizingMask = [.width]
+        slider.isContinuous = true
+        slider.altIncrementValue = sentencePauseSliderStep
+        slider.setAccessibilityLabel("Sentence pause")
+        slider.setAccessibilityValueDescription("\(value) milliseconds")
+        view.addSubview(slider)
+
+        for (text, x) in [("0 s", 9.0), ("5 s", 242.0)] {
+            let endpoint = NSTextField(labelWithString: text)
+            endpoint.frame = NSRect(x: x, y: 14, width: 30, height: 16)
+            if x > 100 { endpoint.autoresizingMask = [.minXMargin] }
+            endpoint.font = NSFont.menuFont(ofSize: 10)
+            endpoint.textColor = .secondaryLabelColor
+            view.addSubview(endpoint)
         }
-        items.append(.separator())
-        let isCustom = !sentencePauseSteps.contains { $0.value == config.sentencePause }
-        items.append(item(
-            isCustom ? "Custom… (\(config.sentencePause) ms)" : "Custom…",
-            #selector(editSentencePause), repr: "", on: isCustom))
-        return items
+        menuItem.view = view
+        return menuItem
     }
 
+    #if TESTING
+    func testCreditUsage() {
+        precondition(ProcessInfo.processInfo.environment["JUST_ALOUD_CONFIG_DIR"] != nil)
+        precondition(ProcessInfo.processInfo.environment["JUST_ALOUD_TEST_RUNTIME_DIR"] != nil)
+        var checks = 0
+        func check(_ condition: Bool, _ message: String) {
+            precondition(condition, message); checks += 1
+        }
+        func waitFor(_ condition: () -> Bool) {
+            let deadline = Date().addingTimeInterval(5)
+            while !condition(), Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            check(condition(), "asynchronous credit request completed")
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CreditUsageStubProtocol.self]
+        creditsSession = URLSession(configuration: configuration)
+        let menu = buildPlaybackMenu()
+        check(menu.indexOfItem(withTag: 999) + 1 == menu.indexOfItem(withTitle: "Settings"), "status directly above Settings")
+        check(creditsStatusLabel?.stringValue == "Credits unavailable", "empty status persists")
+        fetchCredits()
+        check(CreditUsageStubProtocol.recordedRequests.isEmpty, "missing key never sends requests")
+        testCreditsAPIKey = "unit-test-credential"
+        fetchCredits()
+        waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+        fetchCredits()
+        check(CreditUsageStubProtocol.recordedRequests.count == 1, "overlapping opens coalesce")
+        check(creditsStatusLabel?.stringValue == "Credits unavailable", "no loading layout jump")
+        CreditUsageStubProtocol.finish(json: #"{"character_count":12450,"character_limit":30000}"#)
+        waitFor { creditsTask == nil }
+        check(creditsStatusLabel?.stringValue == "Credits: 12,450 / 30,000 used · 41.5%", "used credits and actual percentage")
+        check(!creditsRefreshFailed, "success clears stale state")
+        let cachedAt = cachedCredits!.fetchedAt
+        fetchCredits()
+        check(creditsStatusLabel?.stringValue == "Credits: 12,450 / 30,000 used · 41.5%", "cache shown synchronously")
+        waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+        check(CreditUsageStubProtocol.recordedRequests.count == 2, "fresh cache still refreshes on next open")
+        CreditUsageStubProtocol.finish(status: 503)
+        waitFor { creditsTask == nil }
+        check(creditsStatusLabel?.stringValue == "Credits: 12,450 / 30,000 used · 41.5% · stale", "failed refresh retains stale balance")
+        check(cachedCredits?.fetchedAt == cachedAt, "failure preserves last successful timestamp")
+        for json in ["broken", #"{"character_count":-1,"character_limit":100}"#,
+                     #"{"character_count":true,"character_limit":100}"#,
+                     #"{"character_count":1,"character_limit":-10}"#,
+                     #"{"character_limit":100}"#] {
+            fetchCredits()
+            waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+            CreditUsageStubProtocol.finish(json: json)
+            waitFor { creditsTask == nil }
+            check(cachedCredits?.used == 12450 && creditsRefreshFailed, "invalid payload preserves cache")
+        }
+        fetchCredits()
+        waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+        CreditUsageStubProtocol.finish(error: URLError(.timedOut))
+        waitFor { creditsTask == nil }
+        check(cachedCredits?.used == 12450 && creditsRefreshFailed, "timeout retains stale cache")
+        for (json, expected) in [
+            (#"{"character_count":0,"character_limit":0}"#, "Credits: 0 / 0 used · N/A"),
+            (#"{"character_count":50}"#, "Credits: 50 / N/A used · N/A"),
+            (#"{"character_count":50,"character_limit":null}"#, "Credits: 50 / N/A used · N/A"),
+            (#"{"character_count":125,"character_limit":100}"#, "Credits: 125 / 100 used · 125.0%"),
+            (#"{"character_count":1,"character_limit":3}"#, "Credits: 1 / 3 used · 33.3%")
+        ] {
+            fetchCredits()
+            waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+            CreditUsageStubProtocol.finish(json: json)
+            waitFor { creditsTask == nil }
+            check(creditsStatusLabel?.stringValue == expected, "allowance and rounding edge case")
+            check(!creditsRefreshFailed, "recovery clears stale state")
+        }
+        cachedCredits = (used: 12450, limit: 30000, fetchedAt: Date().addingTimeInterval(-61))
+        renderCreditsStatus()
+        check(creditsStatusLabel!.stringValue.hasSuffix(" · stale"), "aged cache is identified")
+        let countBeforeGeneration = CreditUsageStubProtocol.recordedRequests.count
+        fetchCredits()
+        waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+        let completed = URL(fileURLWithPath: playbackRuntimeDir).appendingPathComponent("completed-fixture")
+        observeCompletedRecordingForCredits(completed)
+        observeCompletedRecordingForCredits(completed)
+        check(creditsRefreshPending, "completion queues a post-generation refresh")
+        CreditUsageStubProtocol.finish(json: #"{"character_count":20,"character_limit":100}"#)
+        waitFor { CreditUsageStubProtocol.recordedRequests.count == countBeforeGeneration + 2 && CreditUsageStubProtocol.pendingCount == 1 }
+        CreditUsageStubProtocol.finish(json: #"{"character_count":30,"character_limit":100}"#)
+        waitFor { creditsTask == nil }
+        check(cachedCredits?.used == 30, "post-generation balance wins")
+        observeCompletedRecordingForCredits(completed)
+        check(creditsTask == nil, "same completion never refetches")
+        observeSpeechActivityForCredits(true)
+        observeSpeechActivityForCredits(true) // Speech remains active while paused.
+        check(creditsTask == nil, "pause or repeated activity never refreshes usage")
+        observeSpeechActivityForCredits(false)
+        waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+        CreditUsageStubProtocol.finish(status: 429)
+        waitFor { creditsTask == nil }
+        check(cachedCredits?.used == 30 && creditsRefreshFailed, "partial generation and rate limiting retain balance")
+        fetchCredits()
+        waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+        resetCreditsForCredentialChange()
+        waitFor { CreditUsageStubProtocol.pendingCount == 0 }
+        check(cachedCredits == nil && creditsStatusLabel?.stringValue == "Credits unavailable", "credential change cancels old account balance")
+        fetchCredits()
+        waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+        CreditUsageStubProtocol.finish(status: 401)
+        waitFor { creditsTask == nil }
+        check(creditsStatusLabel?.stringValue == "Credits unavailable", "no balance on authentication failure")
+        cachedCredits = (used: 80, limit: 100, fetchedAt: Date())
+        fetchCredits()
+        waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+        testCreditsAPIKey = nil
+        fetchCredits()
+        waitFor { CreditUsageStubProtocol.pendingCount == 0 }
+        check(cachedCredits?.used == 80 && creditsRefreshFailed && creditsTask == nil,
+              "missing credential cancels pending request but retains stale balance")
+        testCreditsAPIKey = "different-test-credential"
+        fetchCredits()
+        waitFor { CreditUsageStubProtocol.pendingCount == 1 }
+        check(cachedCredits == nil, "different account cannot display previous balance")
+        CreditUsageStubProtocol.finish(json: #"{"character_count":10,"character_limit":100}"#)
+        waitFor { creditsTask == nil }
+        check(cachedCredits?.used == 10 && !creditsRefreshFailed, "new credential uses only new balance")
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            NSAppearance(named: name)!.performAsCurrentDrawingAppearance {
+                cachedCredits = (used: 999999999, limit: 999999999, fetchedAt: Date())
+                creditsRefreshFailed = true
+                renderCreditsStatus()
+                let label = creditsStatusLabel!
+                let measured = (label.stringValue as NSString).size(withAttributes: [.font: label.font!]).width
+                check(measured <= label.frame.width, "compact balance and stale state fit on one line")
+                check(creditsMenuItem?.view?.frame.width == 280, "credit status never widens the popover")
+                check(creditsMenuItem?.title == "Credits", "native menu title cannot widen the popover")
+                check(label.textColor == .secondaryLabelColor, "semantic subdued color")
+                check(!label.isEditable && !label.isSelectable, "read-only status")
+                check(label.accessibilityLabel()?.contains("999,999,999") == true, "accessible exact balance")
+                check(label.toolTip?.contains("999,999,999") == true, "hover reveals exact balance")
+            }
+        }
+        check(!CreditUsageResponse.title(used: Int.max, limit: 1, stale: false).contains("inf"), "large balance avoids overflow")
+        for (used, limit) in [(5_410_242, 33_098_807), (Int.max, 1), (1, Int.max), (Int.max, Int.max)] {
+            for stale in [false, true] {
+                cachedCredits = (used: used, limit: limit, fetchedAt: Date())
+                creditsRefreshFailed = stale
+                renderCreditsStatus()
+                let label = creditsStatusLabel!
+                check((label.stringValue as NSString).size(withAttributes: [.font: label.font!]).width <= 244,
+                      "large and extreme balances fit without truncation")
+                check(label.accessibilityLabel() == CreditUsageResponse.title(used: used, limit: limit, stale: stale),
+                      "compact visual balance retains exact accessible values")
+                check(label.stringValue.contains("%"), "compact balance keeps percentage visible")
+            }
+        }
+        for request in CreditUsageStubProtocol.recordedRequests {
+            check(request.httpMethod == "GET" && request.httpBody == nil && request.httpBodyStream == nil,
+                  "usage request cannot synthesize speech")
+            check(request.url?.absoluteString == "https://api.elevenlabs.io/v1/user/subscription", "only the usage endpoint requested")
+            check(request.cachePolicy == .reloadIgnoringLocalCacheData, "background refresh bypasses HTTP cache")
+        }
+        check(!FileManager.default.fileExists(atPath: speechPIDPath), "usage checks did not launch speech")
+        print("PASS: \(checks) credit usage, refresh, stale-state, generation, and read-only request checks")
+        creditsSession.invalidateAndCancel()
+    }
+
+    func testMenuLayout() {
+        precondition(ProcessInfo.processInfo.environment["JUST_ALOUD_CONFIG_DIR"] != nil)
+        precondition(ProcessInfo.processInfo.environment["JUST_ALOUD_TEST_RUNTIME_DIR"] != nil)
+        var checks = 0
+        func check(_ condition: Bool, _ message: String) {
+            precondition(condition, message)
+            checks += 1
+        }
+        func titles(_ menu: NSMenu) -> [String] {
+            menu.items.filter { !$0.isSeparatorItem && !$0.isHidden && $0.view == nil }.map(\.title)
+        }
+        installStandardEditMenu()
+        check(NSApp.mainMenu?.items.map(\.title) == ["Just Aloud", "Edit"], "standard app and Edit menus")
+        let appCommands = NSApp.mainMenu!.items[0].submenu!
+        check(appCommands.items.contains { $0.title == "Show Playback Controls" }, "playback controls can be reopened")
+        check(appCommands.items.contains { $0.keyEquivalent == "q" && $0.action == #selector(NSApplication.terminate(_:)) }, "standard clean Quit shortcut")
+        for backend in ["elevenlabs", "local", "auto"] {
+            config.ttsBackend = backend
+            config.backendsInstalled = "both"
+            config.modelId = "eleven_multilingual_v2"
+            config.stability = 0.35
+            config.similarityBoost = 0.65
+            config.style = 0.25
+            config.useSpeakerBoost = false
+            config.save()
+            let before = try! Data(contentsOf: URL(fileURLWithPath: configPath))
+            cachedCredits = nil
+            let menu = buildPlaybackMenu()
+            let settings = menu.item(withTitle: "Settings")!.submenu!
+            check(titles(menu).suffix(3) == ["Settings", "About Just Aloud", "Quit Just Aloud"], "app commands grouped")
+            for title in ["Speech Engine", "Backend", "Model", "Stability", "Similarity", "API Key…", "Open at Login"] {
+                check(menu.item(withTitle: title) == nil, "configuration not at root: \(title)")
+            }
+            check(settings.item(withTitle: "Advanced Voice Settings") == nil, "no redundant layer")
+            check(settings.item(withTitle: "Speech Engine")?.submenu?.items.count == 3, "all engines reachable")
+            let login = settings.item(withTitle: "Open at Login")!
+            check(login.action == #selector(toggleOpenAtLogin), "login action preserved")
+            check(login.state == openAtLoginState, "native login state preserved")
+            check(login.target === self, "login action target preserved")
+            check(menu.items.first?.view?.frame.size == NSSize(width: 280, height: 52), "media dimensions preserved")
+            check(menu.items.compactMap(\.view).contains { $0.viewWithTag(4201) != nil }, "pause slider remains at root")
+            check(menu.indexOfItem(withTag: 999) + 1 == menu.indexOfItem(withTitle: "Settings"), "persistent credits immediately above Settings")
+            check(menu.item(withTag: 999)?.isHidden == false, "credit status always visible")
+            check(settings.item(withTag: 999) == nil, "credits are not settings")
+            check(menu.item(withTitle: "Quit Just Aloud")?.keyEquivalent == "q", "quit shortcut preserved")
+            check(before == (try! Data(contentsOf: URL(fileURLWithPath: configPath))), "building menu never changes preferences")
+            if backend == "local" {
+                check(titles(settings) == ["Speech Engine", "Open at Login"], "local settings remain available")
+                fetchCredits()
+                check(creditsStatusLabel?.stringValue == "Credits unavailable", "no balance remains visible in local mode")
+            } else {
+                check(titles(settings) == ["Speech Engine", "Model", "Stability", "Similarity", "API Key…", "Open at Login"], "flat cloud settings order")
+                check(settings.items.filter(\.isSeparatorItem).count == 2, "voice account and app groups separated")
+                check(creditsStatusLabel?.stringValue == "Credits unavailable", "unknown credits retain stable placeholder")
+                cachedCredits = (used: 25, limit: 100, fetchedAt: Date())
+                creditsRefreshFailed = false
+                renderCreditsStatus()
+                check(menu.item(withTag: 999)?.title == "Credits", "main status does not change native menu width")
+                check(creditsStatusLabel?.stringValue == "Credits: 25 / 100 used · 25.0%", "visible status label updates")
+                cachedCredits = (used: 40, limit: 100, fetchedAt: Date())
+                let reopened = buildPlaybackMenu()
+                check(reopened.item(withTag: 999)?.title == "Credits" && creditsStatusLabel?.stringValue == "Credits: 40 / 100 used · 40.0%", "cached credits survive rebuild")
+                config.modelId = "eleven_v3"
+                let v3 = buildPlaybackMenu().item(withTitle: "Settings")!.submenu!
+                check(v3.item(withTitle: "Stability")!.submenu!.items.count == 3, "v3 stability presets preserved")
+                check(v3.item(withTitle: "Similarity")!.submenu!.items.first!.isEnabled == false, "v3 unsupported hint preserved")
+            }
+        }
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = NSAppearance(named: name)!
+            appearance.performAsCurrentDrawingAppearance {
+                for item in [buildElSpeedSliderItem(), buildSentencePauseSliderItem()] {
+                    check(item.view?.frame.size == NSSize(width: 280, height: 66), "slider dimensions preserved")
+                    let slider = item.view!.subviews.compactMap { $0 as? NSSlider }.first!
+                    check(slider.isEnabled && slider.isContinuous, "native slider operable")
+                    check(slider.accessibilityLabel()?.isEmpty == false, "slider accessibility label")
+                    let action = item.view!.subviews.compactMap { $0 as? NSButton }.first!
+                    check(action.isEnabled && action.contentTintColor == .labelColor, "adaptive readable action")
+                }
+            }
+        }
+        print("PASS: \(checks) menu layout checks")
+    }
+
+    func testSentencePauseSlider() {
+        // This test must never touch the user's config or active audio queue.
+        let env = ProcessInfo.processInfo.environment
+        precondition(env["JUST_ALOUD_CONFIG_DIR"] != nil)
+        precondition(env["JUST_ALOUD_TEST_RUNTIME_DIR"] != nil)
+        let sandbox = URL(fileURLWithPath: env["JUST_ALOUD_TEST_RUNTIME_DIR"]!).resolvingSymlinksInPath().path
+        precondition(URL(fileURLWithPath: playbackRuntimeDir).resolvingSymlinksInPath().path == sandbox)
+        precondition(URL(fileURLWithPath: configDir).resolvingSymlinksInPath().path.hasPrefix(sandbox + "/"))
+        precondition(!FileManager.default.fileExists(atPath: speechPIDPath))
+        let menuItem = buildSentencePauseSliderItem()
+        let view = menuItem.view!
+        let slider = view.subviews.compactMap { $0 as? NSSlider }.first!
+        let valueButton = view.viewWithTag(4201) as! NSButton
+        var checks = 0
+        func check(_ condition: Bool) { precondition(condition); checks += 1 }
+        check(slider.minValue == 0 && slider.maxValue == 5_000)
+        check(slider.isContinuous)
+        check(valueButton.action == #selector(editSentencePause))
+        for (raw, expected) in [(0.0, 0), (49.0, 50), (250.0, 250),
+                                (400.0, 400), (2481.0, 2500), (5000.0, 5000)] {
+            slider.doubleValue = raw
+            check(slider.sendAction(slider.action, to: slider.target))
+            check(config.sentencePause == expected)
+            check(Config.load().sentencePause == expected)
+            check(valueButton.title == "\(expected) ms")
+            check(menuItem.view === view && slider.superview === view)
+        }
+        setSentencePause(333)
+        check(Config.load().sentencePause == 333)
+        let reopened = buildSentencePauseSliderItem().view!
+        check(reopened.subviews.compactMap { $0 as? NSSlider }.first!.intValue == 333)
+        // Exercise live delivery using this isolated queue, never the real one.
+        speakLock.lock()
+        isSpeakingFlag = true
+        speakLock.unlock()
+        setSentencePause(750)
+        check((try? String(contentsOfFile: audioControlPath, encoding: .utf8)) == "sentence-pause:750\n")
+        speakLock.lock()
+        isSpeakingFlag = false
+        speakLock.unlock()
+        print("PASS: \(checks) sentence-pause slider checks")
+    }
+    #endif
+
     private func buildStabilityItems() -> [NSMenuItem] {
+        if config.modelId == "eleven_v3" {
+            let effective = (config.stability * 2).rounded() / 2
+            return [("Creative", 0.0), ("Natural", 0.5), ("Robust", 1.0)].map { label, value in
+                item(label, #selector(pickStability(_:)), repr: String(value), on: effective == value)
+            }
+        }
         var items = [hintItem("Lower = expressive · Higher = steady"), .separator()]
         items += stabilitySteps.map { s in
             item(s.label, #selector(pickStability(_:)),
@@ -1382,6 +2126,9 @@ private final class VoiceActionButton: NSButton {
     }
 
     private func buildSimilarityItems() -> [NSMenuItem] {
+        if config.modelId == "eleven_v3" {
+            return [hintItem("Not supported by Eleven v3; saved value is preserved")]
+        }
         var items = [hintItem("How closely output matches the original voice"), .separator()]
         items += similaritySteps.map { s in
             item(s.label, #selector(pickSimilarity(_:)),
@@ -1747,21 +2494,29 @@ private final class VoiceActionButton: NSButton {
 
     private func setSentencePause(_ value: Int) {
         let bounded = min(max(value, 0), 5_000)
+        guard config.sentencePause != bounded else { return }
         config.sentencePause = bounded
         config.save()
         if isSpeechActive {
             sendAudioControl("sentence-pause:\(bounded)")
         }
-        rebuildMenu()
     }
 
-    @objc private func pickSentencePause(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let value = Int(rawValue) else { return }
+    @objc private func sentencePauseSliderChanged(_ sender: NSSlider) {
+        let value = Int((sender.doubleValue / sentencePauseSliderStep).rounded()
+                        * sentencePauseSliderStep)
         setSentencePause(value)
+        sender.doubleValue = Double(config.sentencePause)
+        sender.setAccessibilityValueDescription("\(config.sentencePause) milliseconds")
+        if let button = sender.superview?.viewWithTag(4201) as? NSButton {
+            button.title = "\(config.sentencePause) ms"
+            button.setAccessibilityValueDescription("\(config.sentencePause) milliseconds")
+        }
+        // Keep the native tracking view alive while dragging; no menu rebuild.
     }
 
     @objc private func editSentencePause() {
+        statusItem.menu?.cancelTracking()
         NSApp.setActivationPolicy(.regular)
         defer { NSApp.setActivationPolicy(.accessory) }
         NSApp.activate(ignoringOtherApps: true)
@@ -1786,6 +2541,7 @@ private final class VoiceActionButton: NSButton {
             return
         }
         setSentencePause(value)
+        rebuildMenu()
     }
 
     @objc private func pickStability(_ sender: NSMenuItem) {
@@ -1873,45 +2629,129 @@ private final class VoiceActionButton: NSButton {
 
     // MARK: - Credits Display
 
-    private func fetchCredits() {
-        guard config.ttsBackend == "auto" || config.ttsBackend == "elevenlabs" else { return }
-        guard let key = readAPIKey(), !key.isEmpty else { return }
-
-        // Use cache if fresh (< 60s old)
-        if let cached = cachedCredits, Date().timeIntervalSince(cached.fetchedAt) < 60 {
-            updateCreditsMenuItem(used: cached.used, limit: cached.limit)
-            return
-        }
-
-        guard let url = URL(string: "https://api.elevenlabs.io/v1/user/subscription") else { return }
-        var request = URLRequest(url: url)
-        request.setValue(key, forHTTPHeaderField: "xi-api-key")
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let data = data, error == nil,
-                  let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let used = json["character_count"] as? Int,
-                  let limit = json["character_limit"] as? Int else { return }
-
-            self?.cachedCredits = (used: used, limit: limit, fetchedAt: Date())
-
-            DispatchQueue.main.async {
-                self?.updateCreditsMenuItem(used: used, limit: limit)
-            }
-        }.resume()
+    private func resetCreditsForCredentialChange() {
+        creditsRequestID += 1
+        creditsTask?.cancel()
+        creditsTask = nil
+        creditsRefreshPending = false
+        creditsKeyInUse = nil
+        cachedCredits = nil
+        creditsRefreshFailed = false
+        renderCreditsStatus()
     }
 
-    private func updateCreditsMenuItem(used: Int, limit: Int) {
-        guard let menu = statusItem.menu,
-              let creditsItem = menu.item(withTag: 999) else { return }
-        let fmt = NumberFormatter()
-        fmt.numberStyle = .decimal
-        let remaining = max(limit - used, 0)
-        let rStr = fmt.string(from: NSNumber(value: remaining)) ?? "\(remaining)"
-        let lStr = fmt.string(from: NSNumber(value: limit)) ?? "\(limit)"
-        creditsItem.title = "Credits: \(rStr) / \(lStr)"
-        creditsItem.isHidden = false
+    private func fetchCredits(afterGeneration: Bool = false) {
+        precondition(Thread.isMainThread)
+        guard !isQuitting else { return }
+        // Show the session cache immediately, but always refresh on menu open.
+        renderCreditsStatus()
+        #if TESTING
+        let key = testCreditsAPIKey
+        #else
+        let key = readAPIKey()
+        #endif
+        guard let key, !key.isEmpty else {
+            if creditsTask != nil {
+                creditsRequestID += 1
+                creditsTask?.cancel()
+                creditsTask = nil
+                creditsRefreshPending = false
+            }
+            creditsRefreshFailed = true
+            renderCreditsStatus()
+            return
+        }
+        if let previousKey = creditsKeyInUse, previousKey != key {
+            resetCreditsForCredentialChange()
+        }
+        creditsKeyInUse = key
+        if creditsTask != nil {
+            // A pre-generation request may report an older balance. Follow it
+            // with one new GET if generation ends while that request is running.
+            creditsRefreshPending = creditsRefreshPending || afterGeneration
+            return
+        }
+        creditsRequestID += 1
+        let requestID = creditsRequestID
+        var request = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/user/subscription")!)
+        request.httpMethod = "GET"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 15
+        request.httpShouldHandleCookies = false
+        request.setValue(key, forHTTPHeaderField: "xi-api-key")
+        creditsTask = creditsSession.dataTask(with: request) { [weak self] data, response, error in
+            let usage: CreditUsageResponse?
+            if error == nil, let data,
+               (response as? HTTPURLResponse)?.statusCode == 200 {
+                usage = try? JSONDecoder().decode(CreditUsageResponse.self, from: data)
+            } else {
+                usage = nil
+            }
+            // Neither cached state nor AppKit views are mutated on the URLSession queue.
+            DispatchQueue.main.async {
+                guard let self, !self.isQuitting, self.creditsRequestID == requestID else { return }
+                self.creditsTask = nil
+                if let usage {
+                    self.cachedCredits = (used: usage.used, limit: usage.limit, fetchedAt: Date())
+                    self.creditsRefreshFailed = false
+                } else {
+                    // Keep the last successful balance, including its timestamp.
+                    self.creditsRefreshFailed = true
+                }
+                self.renderCreditsStatus()
+                if self.creditsRefreshPending {
+                    self.creditsRefreshPending = false
+                    self.fetchCredits()
+                }
+            }
+        }
+        creditsTask?.resume()
+    }
+
+    private func observeCompletedRecordingForCredits(_ recording: URL?) {
+        guard let recording, recording != creditObservedRecording else { return }
+        creditObservedRecording = recording
+        // The complete marker is written after generation, before playback ends.
+        fetchCredits(afterGeneration: true)
+    }
+
+    private func observeSpeechActivityForCredits(_ active: Bool) {
+        let finished = creditObservedSpeechActive && !active
+        creditObservedSpeechActive = active
+        // Also covers external CLI runs and failed/partial requests that consumed
+        // credits but never produced a complete recording. Pause is still active.
+        if finished { fetchCredits(afterGeneration: true) }
+    }
+
+    private func renderCreditsStatus() {
+        guard let item = creditsMenuItem, let label = creditsStatusLabel else { return }
+        let title: String
+        if let cached = cachedCredits {
+            let stale = creditsRefreshFailed || Date().timeIntervalSince(cached.fetchedAt) >= 60
+            title = CreditUsageResponse.title(used: cached.used, limit: cached.limit, stale: stale)
+            label.toolTip = title + "\nElevenLabs credits used / total allowance. Last updated " +
+                DateFormatter.localizedString(from: cached.fetchedAt, dateStyle: .medium, timeStyle: .medium) +
+                (stale ? ". Cached balance; refresh unavailable or pending." : ".") +
+                ((cached.limit ?? 0) <= 0 ? " Percentage unavailable without a positive allowance." : "")
+        } else {
+            title = "Credits unavailable"
+            label.toolTip = "Unable to retrieve ElevenLabs credit usage. Check the API key and connection in Settings."
+        }
+        var display = title
+        // Preserve the original 280-point control width. Exact totals stay in
+        // the tooltip and accessibility label; only long visual values compact.
+        if let cached = cachedCredits {
+            let stale = creditsRefreshFailed || Date().timeIntervalSince(cached.fetchedAt) >= 60
+            for digits in [2, 1, 0] {
+                if (display as NSString).size(withAttributes: [.font: label.font!]).width <= 244 { break }
+                display = CreditUsageResponse.compactTitle(used: cached.used, limit: cached.limit,
+                                                           stale: stale, digits: digits)
+            }
+        }
+        label.stringValue = display
+        label.setAccessibilityLabel(title)
+        item.view?.setFrameSize(NSSize(width: 280, height: 26))
+        label.frame = NSRect(x: 18, y: 5, width: 244, height: 16)
     }
 
     // MARK: - About and safe migration
@@ -2344,6 +3184,7 @@ private final class VoiceActionButton: NSButton {
     /// Validate an API key by calling /v1/user/subscription.
     /// Returns nil on success, or an error message on failure.
     private func validateAPIKey(_ key: String) -> String? {
+        guard !offlinePreview else { return "Network access is disabled in offline UI preview." }
         guard let url = URL(string: "https://api.elevenlabs.io/v1/user/subscription") else {
             return "Could not build request URL."
         }
@@ -2458,6 +3299,26 @@ private final class VoiceActionButton: NSButton {
 // MARK: - Entry point
 
 #if TESTING
+if CommandLine.arguments.contains("--test-credit-usage") {
+    _ = NSApplication.shared
+    AppDelegate().testCreditUsage()
+    exit(0)
+}
+if CommandLine.arguments.contains("--test-menu-layout") {
+    _ = NSApplication.shared
+    AppDelegate().testMenuLayout()
+    exit(0)
+}
+if CommandLine.arguments.contains("--test-recording-lifecycle") {
+    _ = NSApplication.shared
+    try AppDelegate().testRecordingLifecycle()
+    exit(0)
+}
+if CommandLine.arguments.contains("--test-sentence-pause-slider") {
+    _ = NSApplication.shared
+    AppDelegate().testSentencePauseSlider()
+    exit(0)
+}
 if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--inspect-config" {
     let inspected = Config.load(from: CommandLine.arguments[2])
     print("backend=\(inspected.ttsBackend)")

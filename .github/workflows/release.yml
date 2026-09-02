@@ -25,6 +25,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          ref: refs/tags/v${{ inputs.version }}
       - name: Import Developer ID certificate into an ephemeral Keychain
         env:
           CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_P12_BASE64 }}
@@ -56,9 +57,19 @@ jobs:
         run: |
           xcrun notarytool store-credentials ci-profile --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_PASSWORD"
           NOTARY_PROFILE=ci-profile ./scripts/notarize.sh
+      - name: Package and notarize disk image
+        env:
+          VERSION: ${{ inputs.version }}
+          SIGN_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
+          NOTARY_PROFILE: ci-profile
+        run: |
+          python3 -m venv "$RUNNER_TEMP/packaging"
+          "$RUNNER_TEMP/packaging/bin/pip" install -r scripts/packaging-requirements.txt
+          PACKAGING_PYTHON="$RUNNER_TEMP/packaging/bin/python" ./scripts/package-dmg.sh
+          ./scripts/notarize-dmg.sh "artifacts/Just-Aloud-$VERSION.dmg"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
-          gh release create "v$VERSION" "artifacts/Just-Aloud-$VERSION.zip" "artifacts/Just-Aloud-$VERSION.zip.sha256" --title "Just Aloud v$VERSION" --generate-notes
+          gh release create "v$VERSION" "artifacts/Just-Aloud-$VERSION.dmg" "artifacts/Just-Aloud-$VERSION.dmg.sha256" --verify-tag --title "Just Aloud $VERSION" --notes-file "Documentation/RELEASE-$VERSION.md"

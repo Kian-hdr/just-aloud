@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+export JUST_ALOUD_DISABLE_RECORDING=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud-test.XXXXXX")

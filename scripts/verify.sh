@@ -8,6 +8,10 @@ python3 -m py_compile normalize.py tts_server.py
 ./tests/enhanced-test.sh
 ./tests/distribution-test.sh
 bash tests/test.sh --fast
+bash tests/sentence-pause-slider-test.sh
+bash tests/menu-layout-test.sh
+bash tests/credit-usage-test.sh
+bash tests/recording-test.sh
 ./scripts/scan-secrets.sh
 ./scripts/scan-personal-data.sh
 cmp LICENSE <(git show v1.1.0:LICENSE)

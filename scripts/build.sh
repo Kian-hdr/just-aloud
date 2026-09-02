@@ -7,8 +7,8 @@ APP="$BUILD_DIR/Just Aloud.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
-VERSION="${VERSION:-0.9.1}"
-BUILD_NUMBER="${BUILD_NUMBER:-2}"
+VERSION="${VERSION:-1.0.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-3}"
 SWIFT_CACHE="${SWIFT_CACHE:-$BUILD_DIR/swift-module-cache}"
 
 case "$APP" in
@@ -18,8 +18,14 @@ if [ -d "$APP" ]; then
     /bin/rm -rf "$APP"
 fi
 mkdir -p "$MACOS" "$RESOURCES" "$SWIFT_CACHE"
-xcrun swiftc -module-cache-path "$SWIFT_CACHE" -O "$ROOT/JustAloud.swift" -o "$MACOS/JustAloud"
-xcrun swiftc -module-cache-path "$SWIFT_CACHE" -O "$ROOT/just-aloud-audio.swift" -o "$RESOURCES/just-aloud-audio"
+for arch in arm64 x86_64; do
+    xcrun swiftc -target "$arch-apple-macos13.0" -module-cache-path "$SWIFT_CACHE" -O \
+        "$ROOT/JustAloud.swift" -o "$BUILD_DIR/JustAloud-$arch"
+    xcrun swiftc -target "$arch-apple-macos13.0" -module-cache-path "$SWIFT_CACHE" -O \
+        "$ROOT/just-aloud-audio.swift" -o "$BUILD_DIR/just-aloud-audio-$arch"
+done
+xcrun lipo -create "$BUILD_DIR/JustAloud-arm64" "$BUILD_DIR/JustAloud-x86_64" -output "$MACOS/JustAloud"
+xcrun lipo -create "$BUILD_DIR/just-aloud-audio-arm64" "$BUILD_DIR/just-aloud-audio-x86_64" -output "$RESOURCES/just-aloud-audio"
 
 cp "$ROOT/just-aloud.sh" "$RESOURCES/just-aloud"
 cp "$ROOT/normalize.py" "$RESOURCES/just-aloud-normalize.py"

@@ -189,6 +189,47 @@ _PREV_TMP_FILE=""
 _PREV_TMP_DIR=""
 _AUDIO_PLAYER_PID=""
 _AUDIO_PLAYING=false
+_RECORDING_DIR=""
+_RECORDING_COUNT=0
+_RECORDING_FAILED=false
+_RECORDING_GENERATION_OK=true
+_GENERATED_WITH_V3=false
+
+# Raw generated chunks are private, temporary app-session data. They are never
+# written to Downloads here and are not regenerated for export.
+_RECORDING_ROOT="${JUST_ALOUD_RECORDING_ROOT:-${TMPDIR:-/tmp}/just-aloud-recordings}"
+if [ "${JUST_ALOUD_DISABLE_RECORDING:-0}" != "1" ] && [ ! -L "$_RECORDING_ROOT" ] &&
+   (umask 077; mkdir -p "$_RECORDING_ROOT"); then
+    _RECORDING_DIR=$(mktemp -d "$_RECORDING_ROOT/recording.XXXXXXXXXX")
+    if [ -n "$_RECORDING_DIR" ]; then
+        chmod 700 "$_RECORDING_DIR"
+        printf '%s\n' "$$" > "$_RECORDING_DIR/pending"
+        printf '%s\n' "${_RECORDING_DIR##*/}" > "$_RECORDING_ROOT/.current.$$"
+        mv -f "$_RECORDING_ROOT/.current.$$" "$_RECORDING_ROOT/current"
+        export JUST_ALOUD_RECORDING_DIR="$_RECORDING_DIR"
+    fi
+fi
+
+archive_audio() {
+    [ -n "$_RECORDING_DIR" ] || return 0
+    _RECORDING_COUNT=$((_RECORDING_COUNT + 1))
+    local chunk="chunk-${_RECORDING_COUNT}.audio"
+    if cp "$TMP_FILE" "$_RECORDING_DIR/$chunk"; then
+        chmod 600 "$_RECORDING_DIR/$chunk"
+        printf '%s\t%s\t%s\n' "$chunk" "${1:-0}" "${2:-$PLAYBACK_SPEED}" >> "$_RECORDING_DIR/manifest.tsv"
+    else
+        _RECORDING_FAILED=true
+    fi
+}
+
+complete_recording() {
+    [ -n "$_RECORDING_DIR" ] || return 0
+    if ! $_RECORDING_FAILED && $_RECORDING_GENERATION_OK && [ "$_RECORDING_COUNT" -gt 0 ] &&
+       "$_AUDIO_TOOL" check-recording "$_RECORDING_DIR" >/dev/null 2>&1; then
+        touch "$_RECORDING_DIR/complete"
+        rm -f "$_RECORDING_DIR/pending"
+    fi
+}
 
 # Write our PID so the toggle can kill the entire process (not just afplay).
 echo "$$" > "$PID_FILE"
@@ -208,6 +249,10 @@ cleanup() {
     rm -f "$TMP_FILE" "$_PREV_TMP_FILE" "${TMP_FILE}.code"
     [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
     [ -n "$_PREV_TMP_DIR" ] && rm -rf "$_PREV_TMP_DIR"
+    # A failed/cancelled request cannot replace the previous complete recording.
+    if [ -n "$_RECORDING_DIR" ] && [ ! -f "$_RECORDING_DIR/complete" ]; then
+        rm -rf "$_RECORDING_DIR"
+    fi
     # Only remove PID file if it's ours (another instance may have overwritten it)
     [ -f "$PID_FILE" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ] && rm -f "$PID_FILE"
 }
@@ -225,11 +270,15 @@ _trace() {
 }
 
 # ── Sentence splitter ────────────────────────────────────────────
-# Split text into sentences for streaming playback.
+# Records are offset<TAB>length<TAB>base64(UTF-8 text). Raw text must never
+# occupy a line-delimited field: paragraphs and tabs are valid sentence content.
 split_sentences() {
-    [ -x "$VENV_PYTHON" ] && "$VENV_PYTHON" -c "
-import re, sys
-text = sys.stdin.read().rstrip('\n')
+    local records length
+    # Capture transactionally: a crashing Python process may already have
+    # printed records. Discard those before emitting the unsplit fallback.
+    if [ -x "$VENV_PYTHON" ] && records=$(printf '%s' "$1" | "$VENV_PYTHON" -c "
+import base64, re, sys
+text = sys.stdin.read()
 try:
     import pysbd
     seg = pysbd.Segmenter(language='en', clean=False)
@@ -249,9 +298,32 @@ for p in parts:
     idx = text.find(p, pos)
     if idx == -1:
         idx = pos
-    print(f'{idx}\t{len(p)}\t{p}')
+    encoded = base64.b64encode(p.encode('utf-8')).decode('ascii')
+    print(f'{idx}\t{len(p)}\t{encoded}')
     pos = idx + len(p)
-" <<< "$1" 2>/dev/null || printf '0\t%d\t%s\n' "${#1}" "$1"
+" 2>/dev/null) && [ -n "$records" ]; then
+        printf '%s\n' "$records"
+    else
+        # Match Python's Unicode-character offsets even under a C shell locale.
+        length=$(printf '%s' "$1" | /usr/bin/perl -MEncode=decode -0777 -ne 'print length decode("UTF-8", $_)')
+        printf '0\t%d\t' "$length"
+        printf '%s' "$1" | /usr/bin/base64 | tr -d '\r\n'
+        printf '\n'
+    fi
+}
+
+decode_sentence() {
+    local decoded
+    # A sentinel protects trailing newlines from command substitution stripping.
+    decoded=$(printf '%s' "$1" | /usr/bin/base64 -D && printf '.') || return 1
+    _SENTENCE=${decoded%.}
+}
+
+sentence_decode_failed() {
+    _RECORDING_GENERATION_OK=false
+    printf '%s\n' 'Just Aloud: could not decode speech text; generation stopped.' >&2
+    osascript -e 'display dialog "Could not decode the speech text. Generation stopped before completion." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution'
+    exit 1
 }
 
 # ── Local TTS helper ────────────────────────────────────────────
@@ -343,6 +415,7 @@ sys.stdout.write(d.decode().strip())
 }
 
 run_local_tts() {
+    _GENERATED_WITH_V3=false
     local PY="${VENV_PYTHON}"
     if [ ! -x "$PY" ]; then
         echo "venv python not found at $PY" >> "$LOG_FILE" 2>/dev/null
@@ -414,11 +487,16 @@ run_local_tts() {
 # Starts playback in the background. Call wait_audio before the next play_audio.
 # This overlap lets the next sentence generate while the current one plays.
 play_audio() {
+    local _playback_rate="$PLAYBACK_SPEED"
+    if $_GENERATED_WITH_V3; then
+        _playback_rate=$(/usr/bin/perl -e 'printf "%.6f", $ARGV[0] * $ARGV[1]' "$SPEED" "$PLAYBACK_SPEED")
+    fi
+    archive_audio "${3:-0}" "$_playback_rate"
     local _epoch_int=$(( ${_BASE_EPOCH%%.*} + SECONDS - _BASE_SECONDS ))
     local _epoch="${_epoch_int}.${_BASE_EPOCH#*.}"
     if [ -n "$_AUDIO_PLAYER_PID" ]; then
         # Fast path: queue player (near-zero inter-sentence gap + configurable pause)
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$TMP_FILE" "$_epoch" "${1:-0}" "${2:-0}" "$STATUS_FILE" "${3:-0}" "$PLAYBACK_SPEED" >&7
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$TMP_FILE" "$_epoch" "${1:-0}" "${2:-0}" "$STATUS_FILE" "${3:-0}" "$_playback_rate" >&7
         read -r _duration <&8   # blocks ~1ms (duration line)
         _AUDIO_PLAYING=true
     else
@@ -432,7 +510,7 @@ play_audio() {
         if [ "${3:-0}" -gt 0 ] 2>/dev/null; then
             /usr/bin/perl -e 'select undef, undef, undef, $ARGV[0] / 1000' "${3:-0}"
         fi
-        afplay -r "$PLAYBACK_SPEED" -q 1 "$TMP_FILE" &
+        afplay -r "$_playback_rate" -q 1 "$TMP_FILE" &
         PLAY_PID=$!
     fi
 }
@@ -476,6 +554,8 @@ wav_duration() {
 # immediately — bash 3.2 cannot handle signals while a foreground
 # command substitution ($()) is running.
 run_elevenlabs_tts() {
+    _GENERATED_WITH_V3=false
+    [ "$MODEL_ID" != "eleven_v3" ] || _GENERATED_WITH_V3=true
     local sentence="$1"
     JSON_TEXT=$(json_encode "$sentence")
     if [ -z "$JSON_TEXT" ]; then
@@ -486,6 +566,17 @@ run_elevenlabs_tts() {
     [ -z "$TMP_FILE" ] || [ ! -f "$TMP_FILE" ] && return 1
 
     local code_file="${TMP_FILE}.code"
+    # Keep saved preferences intact, but omit unsupported v3 speaker boost.
+    local boost_json=",\"use_speaker_boost\": ${USE_SPEAKER_BOOST}"
+    local speed_json=",\"speed\": ${SPEED}"
+    local similarity_json="\"similarity_boost\": ${SIMILARITY_BOOST},"
+    local request_stability="$STABILITY"
+    if [ "$MODEL_ID" = "eleven_v3" ]; then
+        boost_json=""
+        speed_json=""
+        similarity_json=""
+        request_stability=$(/usr/bin/perl -e 'print $ARGV[0] < .25 ? 0 : $ARGV[0] < .75 ? 0.5 : 1' "$STABILITY")
+    fi
     curl -s -w "%{http_code}" \
         --max-time 30 \
         -o "$TMP_FILE" \
@@ -497,11 +588,11 @@ run_elevenlabs_tts() {
             \"text\": ${JSON_TEXT},
             \"model_id\": \"${MODEL_ID}\",
             \"voice_settings\": {
-                \"stability\": ${STABILITY},
-                \"similarity_boost\": ${SIMILARITY_BOOST},
-                \"style\": ${STYLE},
-                \"use_speaker_boost\": ${USE_SPEAKER_BOOST},
-                \"speed\": ${SPEED}
+                \"stability\": ${request_stability},
+                ${similarity_json}
+                \"style\": ${STYLE}
+                ${boost_json}
+                ${speed_json}
             }
         }" > "$code_file" &
     _CURL_PID=$!
@@ -547,15 +638,19 @@ if [ "$TTS_BACKEND" = "local" ]; then
     # so there is no audible gap between sentences.
     _SAVED_TEXT="$TEXT"
     _FIRST=true
-    while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
+    while IFS=$'\t' read -r _OFFSET _SENT_LEN _ENCODED_SENTENCE; do
+        decode_sentence "$_ENCODED_SENTENCE" || sentence_decode_failed
         [ -z "$_SENTENCE" ] && continue
         TEXT="$_SENTENCE"
         _trace "gen_start"
         run_local_tts
         _ok=$?
+        [ $_ok -eq 0 ] || _RECORDING_GENERATION_OK=false
         _trace "gen_done"
-        if $_FIRST && [ $_ok -ne 0 ]; then
-            osascript -e 'display dialog "Local TTS generation failed." & return & return & "Re-run the Just Aloud installer to repair the local TTS setup." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution'
+        if [ $_ok -ne 0 ]; then
+            wait_audio
+            printf '%s\n' 'Just Aloud: local speech generation failed before completion.' >&2
+            osascript -e 'display dialog "Local TTS generation failed before all text could be read." & return & return & "The incomplete recording was not saved. Re-run the Just Aloud installer to repair the local TTS setup." with title "Just Aloud" buttons {"OK"} default button "OK" with icon caution'
             exit 1
         fi
         if [ $_ok -eq 0 ]; then
@@ -573,17 +668,20 @@ if [ "$TTS_BACKEND" = "local" ]; then
             _trace "play_launched"
         fi
     done <<< "$_SENTENCES"
+    complete_recording
     wait_audio
     TEXT="$_SAVED_TEXT"
 else
     # ── ElevenLabs (cloud API) ───────────────────────────────────
     # Pipeline: generate next sentence while the current one plays.
     _FIRST=true
-    while IFS=$'\t' read -r _OFFSET _SENT_LEN _SENTENCE; do
+    while IFS=$'\t' read -r _OFFSET _SENT_LEN _ENCODED_SENTENCE; do
+        decode_sentence "$_ENCODED_SENTENCE" || sentence_decode_failed
         [ -z "$_SENTENCE" ] && continue
         _trace "gen_start"
         if ! run_elevenlabs_tts "$_SENTENCE"; then
-            break  # first sentence → error handler below; later → exit silently
+            _RECORDING_GENERATION_OK=false
+            break  # report first- and later-chunk failures below
         fi
         _trace "gen_done"
         _trace "wait_start"
@@ -597,7 +695,20 @@ else
         play_audio "$_OFFSET" "$_SENT_LEN" "$_THIS_PAUSE"
         _trace "play_launched"
     done <<< "$_SENTENCES"
+    complete_recording
     wait_audio
+
+    if ! $_RECORDING_GENERATION_OK && ! $_FIRST; then
+        # Do not replay the whole text via fallback after partial playback.
+        # Never mark a partial generation complete or overwrite the last export.
+        _FAILURE_DETAIL="Network request failed."
+        if [[ "$HTTP_CODE" =~ ^[0-9][0-9][0-9]$ ]] && [ "$HTTP_CODE" != "000" ]; then
+            _FAILURE_DETAIL="ElevenLabs returned HTTP ${HTTP_CODE} or empty audio."
+        fi
+        printf 'Just Aloud: speech stopped before completion. %s\n' "$_FAILURE_DETAIL" >&2
+        osascript -e "display dialog \"Speech stopped before all text could be read.\" & return & return & \"${_FAILURE_DETAIL} The incomplete recording was not saved. Please try again.\" with title \"Just Aloud\" buttons {\"OK\"} default button \"OK\" with icon caution"
+        exit 1
+    fi
 
     # If the first sentence failed, handle the error (429, network, etc.)
     if $_FIRST; then
@@ -607,6 +718,8 @@ else
                 rm -f "$TMP_FILE"; TMP_FILE=""
                 if run_local_tts; then
                     play_audio
+                    _RECORDING_GENERATION_OK=true
+                    complete_recording
                     wait_audio
                     exit 0
                 fi
@@ -623,6 +736,8 @@ else
                 rm -f "$TMP_FILE"; TMP_FILE=""
                 if run_local_tts; then
                     play_audio
+                    _RECORDING_GENERATION_OK=true
+                    complete_recording
                     wait_audio
                     exit 0
                 fi
@@ -637,6 +752,8 @@ else
                         rm -f "$TMP_FILE"; TMP_FILE=""
                         if run_local_tts; then
                             play_audio
+                            _RECORDING_GENERATION_OK=true
+                            complete_recording
                             wait_audio
                             exit 0
                         fi
@@ -649,7 +766,7 @@ else
         fi
 
         # ── Handle other errors ──────────────────────────────────
-        if [ "$HTTP_CODE" != "200" ]; then
+        if ! $_RECORDING_GENERATION_OK; then
             SAFE_ERROR=$(cat "$TMP_FILE" 2>/dev/null \
                 | head -c 300 \
                 | tr -d '\000-\037"\\')

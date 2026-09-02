@@ -1,12 +1,45 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 (build 3)
+
+- First stable Just Aloud re-release, with universal macOS executables and a
+  signed, notarized drag-to-Applications disk image.
+
+- Fixed multi-paragraph truncation in both installed speech-script entry points.
+  Sentence records now safely encode embedded newlines and tabs, including the
+  missing/failed-Python fallback. Later-chunk failures are visible and do not
+  replace complete recordings with partial audio.
+- Restored the original menu width; long credit balances compact without hiding
+  the percentage, while hover and VoiceOver retain exact totals.
+- Updated the persistent credit-usage status to show used / total credits and
+  percentage, refresh in the background on open and generation completion, and
+  retain stale balances on failure. Usage requests never invoke synthesis.
+- Added a download arrow for offline WAV export of already-generated audio,
+  retaining speed and sentence pauses without additional synthesis requests.
+  Downloads requested during generation wait for a complete recording.
+- Retained the latest successful recording until app quit, preserving it when
+  a newer request fails or is cancelled. Explicit downloads are never cleaned up.
+- Grouped listening controls in the main menu and configuration directly under
+  Settings, including Speech Engine, Model, Stability, Similarity, API Key,
+  and Open at Login. Removed redundant advanced-settings nesting. Credit usage
+  stays in a persistent main-menu status row directly above Settings.
+- Removed Style and Speaker Boost from the main menu without resetting saved
+  preferences. Unsupported v3 options are omitted from requests.
+
+- Replaced sentence-pause presets with a native 0–5 second slider in 50 ms
+  steps, a live value, and exact millisecond entry by clicking the value.
+  Dragging keeps the menu open and updates active playback without restarting it.
 
 - Prevented recurring Accessibility dialogs by removing launch-time prompting
   and rechecking existing authorization before a user-initiated request.
-- Fixed a missing or obscured menu-bar item by using an explicitly sized
-  waveform template and a dedicated visible position away from the crowded
-  Bluetooth, sleep, and battery cluster.
+- Silently detect Accessibility grants made in System Settings and limit the
+  user-initiated system prompt to once per session.
+- Removed the persistent Accessibility warning from the playback menu.
+  Permission setup remains available in the welcome window through About.
+- Restored native waveform template rendering and standard menu-bar sizing,
+  with a stable autosave name and no forced positioning or tint overrides.
+- Documented a macOS Tahoe Control Center association problem that can hide
+  the icon despite Just Aloud being enabled in Menu Bar settings.
 - Added a native, user-controlled Open at Login menu item using Apple's
   ServiceManagement framework.
 - Fixed the sentence-pause control so the chosen duration is real elapsed
