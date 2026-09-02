@@ -20,6 +20,11 @@ jobs:
         run: git fetch --no-tags https://github.com/smcantab/speak11.git refs/tags/v1.1.0:refs/tags/v1.1.0
       - name: Verify source
         run: ./scripts/verify.sh
+      - name: Verify disk-image layout metadata
+        run: |
+          python3 -m venv "$RUNNER_TEMP/packaging"
+          "$RUNNER_TEMP/packaging/bin/pip" install -r scripts/packaging-requirements.txt
+          "$RUNNER_TEMP/packaging/bin/python" tests/dmg-layout-test.py
       - name: Build unsigned app
         run: ./scripts/build.sh
       - name: Verify bundle identity

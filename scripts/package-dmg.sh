@@ -15,7 +15,6 @@ STAGE=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud-dmg.XXXXXXXX")
 trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/Just Aloud.app"
 ln -s /Applications "$STAGE/Applications"
-cp "$ROOT/Documentation/Install Just Aloud.txt" "$STAGE/Install Just Aloud.txt"
 "$PYTHON" "$ROOT/scripts/dmg-layout.py" "$STAGE"
 mkdir -p "$OUT"
 hdiutil create -srcfolder "$STAGE" -volname 'Just Aloud' -fs HFS+ -format UDZO -imagekey zlib-level=9 "$DMG"
