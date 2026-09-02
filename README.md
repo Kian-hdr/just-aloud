@@ -15,7 +15,7 @@ private multi-voice library.
 
 | Dark appearance | Light appearance |
 |---|---|
-| ![Just Aloud voice menu in dark appearance](Documentation/Screenshots/voice-dark.png) | ![Just Aloud voice menu in light appearance](Documentation/Screenshots/voice-light.png) |
+| ![Just Aloud main menu in dark appearance](Documentation/Screenshots/menu-dark.png) | ![Just Aloud main menu in light appearance](Documentation/Screenshots/menu-light.png) |
 
 | Welcome in dark appearance | Welcome in light appearance |
 |---|---|
@@ -25,6 +25,9 @@ private multi-voice library.
 
 - Pause and resume without losing position
 - Skip backward or forward 10 seconds and stop playback
+- Download the complete generated recording as a WAV, without regenerating
+  speech or spending additional synthesis credits
+- Sentence-pause slider from 0–5 seconds, with exact millisecond entry
 - Pitch-preserving playback speed from 0.7× to 3×
 - Menu-bar animation only while audio is actually audible
 - Paste, save, name, select, copy, and remove multiple custom voice IDs
@@ -33,11 +36,49 @@ private multi-voice library.
 - Original adaptive macOS icon and separate monochrome menu-bar template
 - Safe opt-in migration from Speak11 without removing the original installation
 - Native first-launch welcome and setup screen, reopenable from About
-- Native Open at Login control in the menu, with macOS approval-state feedback
+- Native Open at Login control under Settings, with macOS approval-state feedback
+
+### Download a recording
+
+Use the download arrow to the right of the playback controls. It saves a WAV
+to Downloads, preserving the recorded playback speed and sentence pauses.
+If generation is still running, the download waits for the full recording.
+Manual pauses, seeking, and replaying are not added to the exported audio.
+An interrupted or failed generation does not replace the previous complete
+recording. You can listen first and download afterward, until you quit the app.
+
+### Menu layout
+
+Playback controls stay at the top, followed by Voice, Speed, and Sentence Pause.
+Credit usage remains visible directly above **Settings**, for example:
+`Credits: 12,450 / 30,000 used · 41.5%`. It displays used credits, not the
+remaining balance, and calculates the percentage from the reported allowance.
+Large balances use compact values such as `5.41M / 33.10M` to preserve the
+menu's original width. Hover over the row for exact numbers; VoiceOver also reads
+the exact balance. The percentage always uses the full, unrounded values.
+The last successful balance is cached for the app session and shown immediately
+when reopening the menu. A background refresh runs on each open and after speech
+generation finishes. Failed refreshes retain that balance with a **stale** label;
+without a balance, the row says **Credits unavailable**. A missing or zero
+allowance shows **N/A** for the percentage.
+
+Usage refreshes only read ElevenLabs'
+[subscription endpoint](https://elevenlabs.io/docs/api-reference/user/subscription/get/).
+They never generate speech or make additional TTS requests. The ElevenLabs
+balance remains accessible even when the local speech engine is selected.
+
+**Settings** contains Speech Engine, Model, Stability, Similarity, API Key,
+and Open at Login, without an extra advanced-settings submenu.
+ElevenLabs-only settings are hidden when using the local engine.
+
+Existing Style and Speaker Boost preferences are preserved even though they
+no longer have main-menu controls. Unsupported model options are not sent.
 
 ## Requirements
 
 - macOS 13 Ventura or later
+- Universal app for Apple Silicon and Intel; the 1.0.0 runtime validation was
+  performed on Apple Silicon with macOS 26.6.2
 - Apple Silicon for optional local Kokoro TTS
 - An ElevenLabs API key for cloud synthesis
 - Accessibility permission for the global `⌥⇧/` shortcut
@@ -46,9 +87,10 @@ private multi-voice library.
 
 ### Direct download
 
-Download the ZIP from the
-[latest release](https://github.com/Kian-hdr/just-aloud/releases/latest), open
-it, and move **Just Aloud.app** to Applications. Releases are signed with Kian
+Download [Just-Aloud-1.0.0.dmg](https://github.com/Kian-hdr/just-aloud/releases/download/v1.0.0/Just-Aloud-1.0.0.dmg),
+open the disk image, and drag **Just Aloud.app** onto **Applications**.
+Eject the disk image and open Just Aloud from Applications. No Homebrew or
+installation script is required. Releases are signed with Kian
 Konrad Tajbakhsh's Developer ID certificate and notarized by Apple.
 
 For a local source build:
@@ -78,7 +120,7 @@ GitHub release.
 
 1. Create an API key in your ElevenLabs account with Text-to-Speech and User
    Read access.
-2. Open the Just Aloud menu and choose **API Key…**. The key is stored in macOS
+2. Open the Just Aloud menu and choose **Settings → API Key…**. The key is stored in macOS
    Keychain, not in the config file.
 3. Choose **Voice → Add Custom Voice ID…** and paste a voice ID.
 4. Just Aloud fetches the voice name and stores the name and ID locally.
@@ -109,6 +151,11 @@ inter-sentence pauses, pause, stop, and idle states.
 - API keys are stored as generic passwords in macOS Keychain.
 - Preferences and voice IDs are stored in `~/.config/just-aloud/config`.
 - Runtime data and optional local-TTS files use `~/.local/share/just-aloud/`.
+- Generated audio chunks are retained privately in the macOS temporary folder
+  for the current app session. A newer complete recording replaces the previous
+  one; partial requests do not. Quitting removes the temporary recordings.
+- Files are saved permanently to Downloads only after pressing Download.
+  Quitting the app never removes those explicitly downloaded files.
 - Just Aloud does not include analytics or telemetry.
 
 Review ElevenLabs' terms and privacy documentation before using its cloud
@@ -118,7 +165,7 @@ service with sensitive text.
 
 | Item | Just Aloud namespace |
 |---|---|
-| App | `~/Applications/Just Aloud.app` |
+| App | `/Applications/Just Aloud.app` (DMG/Homebrew), `~/Applications/Just Aloud.app` (source installer) |
 | Bundle ID | `space.exlumina.justaloud` |
 | Executable | `JustAloud` |
 | Command | `~/.local/bin/just-aloud` |
@@ -135,7 +182,11 @@ being displayed.
 
 ## Uninstall
 
-Double-click `uninstall.command`. It removes only Just Aloud's app, scripts,
+For a DMG installation, quit Just Aloud and move the app from Applications to
+Trash. For Homebrew, run `brew uninstall --cask just-aloud`. These methods retain
+your settings and Keychain credential. Do not use `--zap` if you want to keep data.
+
+For a source installation, `uninstall.command` performs a full cleanup. It removes only Just Aloud's app, scripts,
 Quick Action, config, runtime data, Keychain item, login item, and Accessibility
 entry. Speak11 installations and data are not targeted.
 

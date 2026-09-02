@@ -33,6 +33,7 @@ _SKIP_SECTION=false
 
 # Isolate tests from any real running TTS daemon
 export TTS_SOCK="/tmp/just-aloud_test_nosock_$$"
+export JUST_ALOUD_DISABLE_RECORDING=1
 
 # ── Dev venv (repo-local, gitignored, survives uninstall) ─────
 # Mirrors a full install: runs install-local.sh + adds pylatexenc.
@@ -1117,14 +1118,14 @@ check "Swift: buildBackendItems includes Auto" \
 check "Swift: backend item uses repr auto" \
     "yes" "$(grep -q '"auto"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Swift: API Key condition uses ttsBackend auto" \
-    "yes" "$(grep -A5 'ttsBackend.*==.*"auto"' "$SETTINGS_SWIFT" | grep -q 'API Key\|apiItem\|api-key\|Credits' && echo "yes" || echo "no")"
+check "Swift: API Key remains in conditional ElevenLabs Settings" \
+    "yes" "$(awk '/private func buildSettingsItems/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'if showEl' && awk '/private func buildSettingsItems/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'let apiItem' && echo "yes" || echo "no")"
 
 check "Swift: fetchCredits method exists" \
     "yes" "$(grep -q 'func fetchCredits' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "Swift: fetchCredits fires for both auto and elevenlabs" \
-    "yes" "$(grep -A2 'func fetchCredits' "$SETTINGS_SWIFT" | grep -q '"elevenlabs"' && echo "yes" || echo "no")"
+check "Swift: credit refresh is a read-only GET independent of speech engine" \
+    "yes" "$(awk '/private func fetchCredits/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'request.httpMethod = "GET"' && ! awk '/private func fetchCredits/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'config.ttsBackend' && echo "yes" || echo "no")"
 
 check "Swift: cachedCredits property exists" \
     "yes" "$(grep -q 'cachedCredits' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
@@ -2315,7 +2316,7 @@ check "split: double space between sentences" \
 
 # split_sentences has a fallback if python fails
 check "split_sentences has fallback on python failure" \
-    "yes" "$(grep -q '|| printf' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(awk '/^split_sentences\(\)/,/^}/' "$SPEAK_SH" | grep -q '/usr/bin/base64' && echo "yes" || echo "no")"
 
 # ── 46a2. Sentence splitting: quality ───────────────────────────
 
@@ -2513,11 +2514,11 @@ check "wait_audio clears PLAY_PID" \
 check "wait_audio tolerates afplay failure (|| true)" \
     "yes" "$(awk '/^wait_audio\(\)/,/^}/' "$SPEAK_SH" | grep -q '|| true' && echo "yes" || echo "no")"
 
-# _FIRST flag: local path shows error dialog only on first sentence failure
-check "local loop: error dialog only on first sentence" \
-    "yes" "$(awk '/TTS_BACKEND.*=.*local/,/^else/' "$SPEAK_SH" | grep -q '\$_FIRST.*_ok.*-ne 0' && echo "yes" || echo "no")"
+# All local chunk failures must report incompleteness, not silently skip text.
+check "local loop: reports any failed chunk" \
+    "yes" "$(grep -A 4 'if \[ \$_ok -ne 0 \]; then' "$SPEAK_SH" | grep -q 'osascript' && echo "yes" || echo "no")"
 
-# _FIRST flag: cloud path breaks to error handler only on first sentence
+# Cloud failures break to the first- or later-chunk error handler.
 check "cloud loop: single break on TTS failure" \
     "yes" "$(awk '/ElevenLabs.*cloud/,/done/' "$SPEAK_SH" | grep -q 'break' && echo "yes" || echo "no")"
 
@@ -2533,9 +2534,9 @@ section "Cloud TTS failure modes"
 check "curl has --max-time for timeout protection" \
     "yes" "$(awk '/^run_elevenlabs_tts/,/^}/' "$SPEAK_SH" | grep -q 'max-time' && echo "yes" || echo "no")"
 
-# Mid-stream cloud failure stops silently (no dialog)
-check "cloud TTS HTTP error: shows dialog" \
-    "yes" "$(awk '/HTTP_CODE.*!=.*200/,/osascript/' "$SPEAK_SH" | grep -q 'osascript' && echo "yes" || echo "no")"
+# Both first- and later-chunk failures must show a dialog.
+check "cloud TTS HTTP error: shows dialogs for first and later chunks" \
+    "yes" "$(grep -q 'display dialog.*Speech stopped before all text' "$SPEAK_SH" && grep -q 'display dialog.*ElevenLabs API error' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 # Fallback: network failure with both backends → tries local
 check "network failure + both: runs run_local_tts" \
@@ -4436,10 +4437,13 @@ check "JustAloud.swift: editSentencePause handler" \
     "yes" "$(grep -q 'func editSentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 check "JustAloud.swift: Sentence Pause menu item shows current value" \
-    "yes" "$(grep -q 'Sentence Pause.*sentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+    "yes" "$(grep -Fq 'button.title = "\(config.sentencePause) ms"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "JustAloud.swift: Sentence Pause offers native preset selector" \
-    "yes" "$(grep -q 'func buildSentencePauseItems' "$SETTINGS_SWIFT" && grep -q 'func pickSentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+check "JustAloud.swift: Sentence Pause offers a continuous native slider" \
+    "yes" "$(awk '/func buildSentencePauseSliderItem/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'slider.isContinuous = true' && grep -q 'func sentencePauseSliderChanged' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: Sentence Pause dragging does not rebuild the menu" \
+    "yes" "$(! awk '/func setSentencePause|func sentencePauseSliderChanged/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'rebuildMenu()' && echo "yes" || echo "no")"
 
 check "JustAloud.swift: Sentence Pause supports custom text input" \
     "yes" "$(awk '/func editSentencePause/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'NSTextField' && echo "yes" || echo "no")"
@@ -4450,11 +4454,17 @@ check "JustAloud.swift: menu-bar item explicitly restores visibility" \
 check "JustAloud.swift: menu-bar uses the requested waveform" \
     "yes" "$(grep -q 'menu-bar-template' "$SETTINGS_SWIFT" && grep -q 'systemSymbolName: "waveform"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "JustAloud.swift: menu-bar icon has explicit native dimensions" \
-    "yes" "$(grep -q 'image.size = NSSize(width: 18, height: 18)' "$SETTINGS_SWIFT" && grep -q 'withLength: 28' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+check "JustAloud.swift: menu-bar uses the native square item size" \
+    "yes" "$(grep -q 'withLength: NSStatusItem.squareLength' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "JustAloud.swift: menu-bar uses a distinct visible default position" \
-    "yes" "$(grep -q 'defaultVisibleStatusItemPosition = 560' "$SETTINGS_SWIFT" && grep -q 'statusItem.autosaveName = statusItemAutosaveName' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+check "JustAloud.swift: menu-bar leaves window placement to macOS" \
+    "yes" "$(! grep -Eq 'recoverStatusItemPlacement|defaultVisibleStatusItemPosition|window.setFrameOrigin' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: menu-bar remains movable with persisted native position" \
+    "yes" "$(grep -q 'statusItemAutosaveName = "JustAloudMenuBar"' "$SETTINGS_SWIFT" && grep -q 'statusItem.autosaveName = statusItemAutosaveName' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: menu-bar uses system-adaptive template rendering" \
+    "yes" "$(grep -q 'configured.isTemplate = true' "$SETTINGS_SWIFT" && ! grep -q 'button.contentTintColor' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 check "JustAloud.swift: menu-bar never imports Speak11's position" \
     "yes" "$(! grep -q 'NSStatusItem Preferred Position com.speak11.status-item' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
@@ -4465,8 +4475,29 @@ check "JustAloud.swift: menu-bar has a visible text fallback" \
 check "JustAloud.swift: launch never prompts for Accessibility" \
     "yes" "$(awk '/func applicationDidFinishLaunching/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'requestAccessibility' && echo "no" || echo "yes")"
 
+check "JustAloud.swift: playback menu has no persistent Accessibility warning" \
+    "yes" "$(! grep -Eq 'Review Accessibility for|Enable Accessibility for' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: permission setup remains available in welcome" \
+    "yes" "$(grep -q 'action: #selector(welcomeRequestAccessibility)' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: configuration lives directly in Settings" \
+    "yes" "$(grep -q 'submenuItem("Settings", items: buildSettingsItems' "$SETTINGS_SWIFT" && ! grep -q 'submenuItem("Advanced Voice Settings"' "$SETTINGS_SWIFT" && ! grep -Eq 'menu.addItem\(submenuItem\("(Backend|Model|Stability|Similarity|Style)"|menu.addItem\(openAtLogin\)' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: download arrow is separate from playback-only enablement" \
+    "yes" "$(grep -q 'symbol: "arrow.down.to.line"' "$SETTINGS_SWIFT" && grep -q 'playbackButtons + \[download\]' "$SETTINGS_SWIFT" && grep -q 'latestRecording != nil' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
 check "JustAloud.swift: Accessibility action ignores an existing grant" \
     "yes" "$(awk '/func requestAccessibility/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'guard !AXIsProcessTrusted' && echo "yes" || echo "no")"
+
+check "JustAloud.swift: launch silently observes manual Accessibility grants" \
+    "yes" "$(awk '/func applicationDidFinishLaunching/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'if !AXIsProcessTrusted() { startAccessibilityPolling() }' && echo "yes" || echo "no")"
+
+check "JustAloud.swift: Accessibility polling never prompts" \
+    "yes" "$(awk '/func startAccessibilityPolling/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'AXIsProcessTrusted()' && ! awk '/func startAccessibilityPolling/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'AXIsProcessTrustedWithOptions' && echo "yes" || echo "no")"
+
+check "JustAloud.swift: Accessibility request is limited to once per session" \
+    "yes" "$(awk '/func requestAccessibility/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'if !didRequestAccessibilityThisSession' && echo "yes" || echo "no")"
 
 check "JustAloud.swift: Open at Login uses native ServiceManagement" \
     "yes" "$(grep -q 'import ServiceManagement' "$SETTINGS_SWIFT" && grep -q 'SMAppService.mainApp.register' "$SETTINGS_SWIFT" && grep -q 'SMAppService.mainApp.unregister' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"

@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Fetch stable upstream tag
-        run: git fetch --tags https://github.com/smcantab/speak11.git v1.1.0
+        run: git fetch --no-tags https://github.com/smcantab/speak11.git refs/tags/v1.1.0:refs/tags/v1.1.0
       - name: Verify source
         run: ./scripts/verify.sh
       - name: Build unsigned app

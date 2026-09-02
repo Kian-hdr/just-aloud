@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-0.9.1}"
+VERSION="${VERSION:-1.0.0}"
 PROFILE="${NOTARY_PROFILE:-}"
 APP="${APP_PATH:-$ROOT/build/Just Aloud.app}"
 ARCHIVE="${ARCHIVE_PATH:-$ROOT/artifacts/Just-Aloud-$VERSION.zip}"
@@ -13,7 +13,11 @@ ARCHIVE="${ARCHIVE_PATH:-$ROOT/artifacts/Just-Aloud-$VERSION.zip}"
 }
 [ -f "$ARCHIVE" ] || { printf 'Missing archive: %s\n' "$ARCHIVE" >&2; exit 1; }
 
-xcrun notarytool submit "$ARCHIVE" --keychain-profile "$PROFILE" --wait
+RESULT="$(dirname "$ARCHIVE")/notary-app.json"
+LOG="$(dirname "$ARCHIVE")/notary-app-log.json"
+xcrun notarytool submit "$ARCHIVE" --keychain-profile "$PROFILE" --wait --output-format json > "$RESULT"
+test "$(plutil -extract status raw "$RESULT")" = Accepted
+xcrun notarytool log "$(plutil -extract id raw "$RESULT")" --keychain-profile "$PROFILE" "$LOG"
 xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"

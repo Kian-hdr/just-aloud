@@ -1,6 +1,6 @@
 # Third-party notices and dependency audit
 
-Audit date: 2026-08-25
+Audit date: 2026-09-03
 
 The repository does not vendor a Python environment, model weights, a
 standalone Python distribution, Apple frameworks, or ElevenLabs code. Optional
@@ -11,7 +11,7 @@ local-TTS components are downloaded into the user's private data directory.
 | Component | Version or source | License or terms | Distribution status |
 |---|---|---|---|
 | Speak11 | v1.1.0, `efc02de…` | Unlicense | Source-derived; attribution preserved |
-| Swift and Xcode toolchain | Apple Xcode 26.6 used for RC | Apple license | Build-time only |
+| Swift and Xcode toolchain | Apple Xcode 26.6 | Apple license | Build-time only |
 | AppKit/Cocoa, ApplicationServices, CoreAudio, AVFoundation, Foundation, Security | macOS SDK | Apple platform terms | System frameworks, not bundled |
 | ElevenLabs API | `api.elevenlabs.io` | ElevenLabs service terms | External network service |
 
@@ -21,6 +21,13 @@ The CI and release definitions pin `actions/checkout` v4.3.1 to commit
 `34e114876b0b11c390a56381ad16ebd13914f8d5`, an MIT-licensed GitHub Action. No
 action source is vendored into release artifacts. GitHub's hosted runner and
 `GITHUB_TOKEN` remain governed by GitHub's service terms.
+
+DMG layout generation uses [ds-store 1.3.3](https://github.com/dmgbuild/ds_store)
+and its dependency [mac-alias 2.2.3](https://github.com/dmgbuild/mac_alias), both
+MIT-licensed (governing LICENSE files inspected). They run only while packaging;
+neither package nor Python is included in the DMG. Versions are pinned in
+`scripts/packaging-requirements.txt`. Finder layout metadata is generated from
+public constants and contains no developer paths or account information.
 
 ## Direct and resolved Python components
 

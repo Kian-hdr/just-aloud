@@ -1,0 +1,20 @@
+JUST ALOUD
+
+Drag Just Aloud.app onto the Applications folder beside it.
+Then eject this disk image and open Just Aloud from Applications.
+
+Just Aloud lives in the menu bar. Click its waveform to open playback controls
+and Settings. Welcome & Setup explains ElevenLabs and Accessibility access.
+
+No Homebrew or installer script is required for this download.
+An existing Speak11 installation is not changed.
+
+To uninstall, quit Just Aloud and move it from Applications to Trash.
+Your settings and Keychain credential are preserved.
+
+Created and maintained by Kian Konrad Tajbakhsh.
+Based on Speak11, originally created by Stefano Martiniani.
+An independent, unofficial derivative, not affiliated with or endorsed by
+Speak11 or ElevenLabs.
+
+Source and licenses: https://github.com/Kian-hdr/just-aloud

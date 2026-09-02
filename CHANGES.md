@@ -5,20 +5,39 @@ This file records the independent downstream work relative to
 
 Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
 
-## Unreleased
+## 1.0.0 (build 3)
+
+- Encoded sentence records losslessly so paragraph newlines, tabs, and Unicode
+  survive with or without Python. Failed splitters cannot leak partial records.
+  Later speech-generation failures now report an error and preserve prior
+  complete recordings instead of silently stopping or saving partial exports.
+- Preserved the compact menu width by abbreviating long credit balances, with
+  exact totals available on hover and through VoiceOver.
+- The persistent credits row now reports used credits, total allowance, and
+  percentage used. It refreshes via a read-only subscription request on menu open
+  and generation completion, retaining session-cached balances with a stale
+  indication on failure. Missing balances and zero/missing allowances are safe.
+- Added private session audio retention and explicit offline WAV downloads,
+  including queued export, speed/pause preservation, and a Reveal in Finder action.
+- Grouped Voice, Speed, and Sentence Pause beneath playback controls. Moved
+  Speech Engine, Model, Stability, Similarity, API Key, and Open at
+  Login into one Settings submenu, preserving values and model-specific behavior.
+- Removed redundant advanced-settings nesting and kept a persistent credit
+  status row directly above Settings. Kept native materials and made slider
+  value actions readable.
 
 - Stopped requesting Accessibility access automatically at launch. Permission
   prompting is now user-initiated and skips the prompt when access is already
   granted.
 - Restored the menu-bar item explicitly at launch, retained the requested
-  waveform symbol, and assigned a distinct visible default position instead
-  of importing Speak11's conflicting position.
+  waveform symbol, and delegated placement and adaptive template rendering
+  to macOS. A stable autosave name preserves native position persistence.
 - Added a native Open at Login control that reflects enabled, disabled, and
   approval-required macOS states without changing the setting automatically.
 - Fixed sentence-pause timing so the selected milliseconds remain exact at
   every playback speed and are also honored by the `afplay` fallback.
-- Replaced the free-form-only pause control with a native preset submenu plus
-  a validated custom value from 0 to 5000 milliseconds.
+- Replaced sentence-pause presets with a continuous native slider from 0 to
+  5000 milliseconds in 50 ms steps. Clicking its value preserves exact entry.
 - Applied pause changes to an active audio queue at the next sentence boundary.
 
 ## 0.9.1
