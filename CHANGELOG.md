@@ -4,9 +4,9 @@
 
 - Prevented recurring Accessibility dialogs by removing launch-time prompting
   and rechecking existing authorization before a user-initiated request.
-- Fixed a missing or obscured menu-bar item by restoring its visibility,
-  keeping the native waveform symbol, and importing Speak11's known visible
-  position once when available.
+- Fixed a missing or obscured menu-bar item by using an explicitly sized
+  waveform template and a dedicated visible position away from the crowded
+  Bluetooth, sleep, and battery cluster.
 - Added a native, user-controlled Open at Login menu item using Apple's
   ServiceManagement framework.
 - Fixed the sentence-pause control so the chosen duration is real elapsed

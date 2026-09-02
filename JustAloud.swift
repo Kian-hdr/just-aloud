@@ -27,6 +27,7 @@ private let playbackStatePath = (NSTemporaryDirectory() as NSString)
     .appendingPathComponent("just_aloud_audio_state")
 private let statusItemAutosaveName = "space.exlumina.justaloud.status-item"
 private let statusItemPositionKey = "NSStatusItem Preferred Position \(statusItemAutosaveName)"
+private let defaultVisibleStatusItemPosition = 360
 private let welcomeCompletionKey = "welcomeCompleted"
 private let welcomeDefaults: UserDefaults = {
     if let suite = ProcessInfo.processInfo.environment["JUST_ALOUD_DEFAULTS_SUITE"],
@@ -346,35 +347,43 @@ private final class VoiceActionButton: NSButton {
     private var ttsDaemonProcess: Process?
 
     private func idleMenuBarImage() -> NSImage {
+        if let path = Bundle.main.path(forResource: "menu-bar-template", ofType: "svg"),
+           let image = NSImage(contentsOfFile: path) {
+            image.size = NSSize(width: 18, height: 18)
+            image.isTemplate = true
+            image.accessibilityDescription = "Just Aloud"
+            return image
+        }
         if let image = NSImage(
             systemSymbolName: "waveform",
             accessibilityDescription: "Just Aloud") {
-            image.isTemplate = true
-            return image
+            let configured = image.withSymbolConfiguration(
+                NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)) ?? image
+            configured.isTemplate = true
+            return configured
         }
         return NSImage()
     }
 
     private func prepareStatusItemPosition() {
+        // NSStatusItem stores this value as distance from the right edge. Keep
+        // the initial item clear of the system cluster while preserving any
+        // position the user later chooses with Command-drag.
         let defaults = UserDefaults.standard
-        guard defaults.object(forKey: statusItemPositionKey) == nil,
-              let speak11Defaults = UserDefaults(suiteName: "com.speak11.menu"),
-              let position = speak11Defaults.object(
-                forKey: "NSStatusItem Preferred Position com.speak11.status-item") else {
-            return
+        if defaults.object(forKey: statusItemPositionKey) == nil {
+            defaults.set(defaultVisibleStatusItemPosition, forKey: statusItemPositionKey)
         }
-        defaults.set(position, forKey: statusItemPositionKey)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         prepareStatusItemPosition()
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: 28)
         statusItem.autosaveName = statusItemAutosaveName
         statusItem.isVisible = true
         if let button = statusItem.button {
             button.image = idleMenuBarImage()
             button.imagePosition = .imageOnly
-            button.imageScaling = .scaleProportionallyDown
+            button.imageScaling = .scaleNone
             button.toolTip = "Just Aloud"
             button.setAccessibilityLabel("Just Aloud menu")
             if button.image?.isValid != true {

@@ -4448,13 +4448,16 @@ check "JustAloud.swift: menu-bar item explicitly restores visibility" \
     "yes" "$(grep -q 'statusItem.isVisible = true' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 check "JustAloud.swift: menu-bar uses the requested waveform" \
-    "yes" "$(grep -q 'systemSymbolName: "waveform"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'menu-bar-template' "$SETTINGS_SWIFT" && grep -q 'systemSymbolName: "waveform"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "JustAloud.swift: menu-bar has a stable saved position" \
-    "yes" "$(grep -q 'statusItem.autosaveName = statusItemAutosaveName' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+check "JustAloud.swift: menu-bar icon has explicit native dimensions" \
+    "yes" "$(grep -q 'image.size = NSSize(width: 18, height: 18)' "$SETTINGS_SWIFT" && grep -q 'withLength: 28' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "JustAloud.swift: menu-bar imports Speak11's visible position once" \
-    "yes" "$(grep -q 'func prepareStatusItemPosition' "$SETTINGS_SWIFT" && grep -q 'NSStatusItem Preferred Position com.speak11.status-item' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+check "JustAloud.swift: menu-bar uses a distinct visible default position" \
+    "yes" "$(grep -q 'defaultVisibleStatusItemPosition = 360' "$SETTINGS_SWIFT" && grep -q 'statusItem.autosaveName = statusItemAutosaveName' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: menu-bar never imports Speak11's position" \
+    "yes" "$(! grep -q 'NSStatusItem Preferred Position com.speak11.status-item' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 check "JustAloud.swift: menu-bar has a visible text fallback" \
     "yes" "$(grep -q 'button.title = "JA"' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
