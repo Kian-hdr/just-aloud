@@ -7,6 +7,9 @@ Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
 
 ## Unreleased
 
+- Stopped requesting Accessibility access automatically at launch. Permission
+  prompting is now user-initiated and skips the prompt when access is already
+  granted.
 - Restored the menu-bar item explicitly at launch and gave Just Aloud a
   distinct native play-circle symbol instead of Speak11's waveform symbol.
 - Fixed sentence-pause timing so the selected milliseconds remain exact at

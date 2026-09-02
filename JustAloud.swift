@@ -367,11 +367,6 @@ private final class VoiceActionButton: NSButton {
         refreshVoiceNames(force: true)
         rebuildMenu()
         let showWelcome = shouldShowWelcomeOnLaunch
-        if !showWelcome,
-           ProcessInfo.processInfo.environment["JUST_ALOUD_SKIP_ACCESSIBILITY_PROMPT"] != "1",
-           !AXIsProcessTrusted() {
-            requestAccessibility()
-        }
         updateTTSDaemon()
         fetchCredits()
         let monitor = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in
@@ -573,6 +568,11 @@ private final class VoiceActionButton: NSButton {
     }
 
     @objc private func requestAccessibility() {
+        guard !AXIsProcessTrusted() else {
+            installHotkey()
+            rebuildMenu()
+            return
+        }
         let key  = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         let opts = [key: true] as CFDictionary
         AXIsProcessTrustedWithOptions(opts)

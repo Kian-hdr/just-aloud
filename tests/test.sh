@@ -4450,6 +4450,12 @@ check "JustAloud.swift: menu-bar item explicitly restores visibility" \
 check "JustAloud.swift: menu-bar identity is distinct from Speak11" \
     "yes" "$(grep -q 'systemSymbolName: "play.circle.fill"' "$SETTINGS_SWIFT" && grep -q 'space.exlumina.justaloud.status-item' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
+check "JustAloud.swift: launch never prompts for Accessibility" \
+    "yes" "$(awk '/func applicationDidFinishLaunching/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'requestAccessibility' && echo "no" || echo "yes")"
+
+check "JustAloud.swift: Accessibility action ignores an existing grant" \
+    "yes" "$(awk '/func requestAccessibility/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'guard !AXIsProcessTrusted' && echo "yes" || echo "no")"
+
 # just-aloud-audio.swift: pause_ms field in protocol
 check "just-aloud-audio.swift: maxSplits is 6 (7 fields including playback rate)" \
     "yes" "$(grep -q 'maxSplits: 6' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"
