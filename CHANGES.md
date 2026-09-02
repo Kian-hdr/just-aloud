@@ -13,6 +13,8 @@ Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
 - Restored the menu-bar item explicitly at launch, retained the requested
   native waveform symbol, and imported Speak11's known visible position once
   so the item is not placed behind a MacBook notch or application menu.
+- Added a native Open at Login control that reflects enabled, disabled, and
+  approval-required macOS states without changing the setting automatically.
 - Fixed sentence-pause timing so the selected milliseconds remain exact at
   every playback speed and are also honored by the `afplay` fallback.
 - Replaced the free-form-only pause control with a native preset submenu plus

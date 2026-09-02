@@ -3,6 +3,7 @@ import ApplicationServices
 import CoreAudio
 import Darwin
 import Security
+import ServiceManagement
 
 // MARK: - Config paths
 
@@ -598,6 +599,37 @@ private final class VoiceActionButton: NSButton {
         startAccessibilityPolling()
     }
 
+    private var openAtLoginState: NSControl.StateValue {
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            return .on
+        case .requiresApproval:
+            return .mixed
+        default:
+            return .off
+        }
+    }
+
+    @objc private func toggleOpenAtLogin() {
+        do {
+            switch SMAppService.mainApp.status {
+            case .enabled:
+                try SMAppService.mainApp.unregister()
+            case .requiresApproval:
+                SMAppService.openSystemSettingsLoginItems()
+            default:
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Couldn’t Update Open at Login"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+        rebuildMenu()
+    }
+
     // MARK: - Speak process management
 
     func runSpeak(withText text: String? = nil) {
@@ -1099,6 +1131,16 @@ private final class VoiceActionButton: NSButton {
                                keyEquivalent: "")
         about.target = self
         menu.addItem(about)
+
+        let openAtLogin = NSMenuItem(title: "Open at Login",
+                                     action: #selector(toggleOpenAtLogin),
+                                     keyEquivalent: "")
+        openAtLogin.target = self
+        openAtLogin.state = openAtLoginState
+        openAtLogin.toolTip = openAtLoginState == .mixed
+            ? "Approval is required in System Settings"
+            : nil
+        menu.addItem(openAtLogin)
 
         let quit = NSMenuItem(title: "Quit Just Aloud",
                               action: #selector(NSApplication.terminate(_:)),

@@ -4465,6 +4465,12 @@ check "JustAloud.swift: launch never prompts for Accessibility" \
 check "JustAloud.swift: Accessibility action ignores an existing grant" \
     "yes" "$(awk '/func requestAccessibility/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'guard !AXIsProcessTrusted' && echo "yes" || echo "no")"
 
+check "JustAloud.swift: Open at Login uses native ServiceManagement" \
+    "yes" "$(grep -q 'import ServiceManagement' "$SETTINGS_SWIFT" && grep -q 'SMAppService.mainApp.register' "$SETTINGS_SWIFT" && grep -q 'SMAppService.mainApp.unregister' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: Open at Login is user-controlled" \
+    "yes" "$(grep -q 'title: "Open at Login"' "$SETTINGS_SWIFT" && ! awk '/func applicationDidFinishLaunching/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'SMAppService.mainApp.register' && echo "yes" || echo "no")"
+
 # just-aloud-audio.swift: pause_ms field in protocol
 check "just-aloud-audio.swift: maxSplits is 6 (7 fields including playback rate)" \
     "yes" "$(grep -q 'maxSplits: 6' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"

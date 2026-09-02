@@ -7,6 +7,8 @@
 - Fixed a missing or obscured menu-bar item by restoring its visibility,
   keeping the native waveform symbol, and importing Speak11's known visible
   position once when available.
+- Added a native, user-controlled Open at Login menu item using Apple's
+  ServiceManagement framework.
 - Fixed the sentence-pause control so the chosen duration is real elapsed
   silence rather than shrinking as playback speed increases.
 - Added clear pause presets, a validated custom value, live updates for active

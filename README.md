@@ -33,6 +33,7 @@ private multi-voice library.
 - Original adaptive macOS icon and separate monochrome menu-bar template
 - Safe opt-in migration from Speak11 without removing the original installation
 - Native first-launch welcome and setup screen, reopenable from About
+- Native Open at Login control in the menu, with macOS approval-state feedback
 
 ## Requirements
 
