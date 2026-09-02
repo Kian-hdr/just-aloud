@@ -62,7 +62,7 @@ struct Config {
     // SPEED × PLAYBACK_SPEED and is exposed as one native slider.
     var playbackSpeed:   Double = 1.0
 
-    // Inter-sentence pause (milliseconds at 1.0x speed, scales with speed)
+    // Inter-sentence pause in real elapsed milliseconds at every speech speed
     var sentencePause:   Int    = 400
 
     static func load(from path: String = configPath) -> Config {
@@ -198,6 +198,17 @@ private let speedStep = 0.05
 // Kokoro accepts a wider speed range
 private let localSpeedSteps: [(label: String, value: Double)] = [
     ("0.5×", 0.5), ("0.75×", 0.75), ("1×", 1.0), ("1.25×", 1.25), ("1.5×", 1.5), ("2×", 2.0),
+]
+
+private let sentencePauseSteps: [(label: String, value: Int)] = [
+    ("None", 0),
+    ("Very Short — 250 ms", 250),
+    ("Natural — 400 ms", 400),
+    ("Short — 500 ms", 500),
+    ("Medium — 750 ms", 750),
+    ("Long — 1 second", 1_000),
+    ("Very Long — 1.5 seconds", 1_500),
+    ("Extra Long — 2 seconds", 2_000),
 ]
 
 private let stabilitySteps: [(label: String, value: Double)] = [
@@ -1022,13 +1033,11 @@ private final class VoiceActionButton: NSButton {
             menu.addItem(.separator())
         }
 
-        // Sentence Pause — playback-level setting, applies to all backends
-        let pauseItem = NSMenuItem(
-            title:  "Sentence Pause: \(config.sentencePause) ms",
-            action: #selector(editSentencePause),
-            keyEquivalent: "")
-        pauseItem.target = self
-        menu.addItem(pauseItem)
+        // Playback-level setting shared by all backends. The selected value is
+        // real elapsed silence and does not shrink at faster playback speeds.
+        menu.addItem(submenuItem(
+            "Sentence Pause: \(config.sentencePause) ms",
+            items: buildSentencePauseItems()))
         menu.addItem(.separator())
 
         // API Key + Credits — when ElevenLabs is active
@@ -1272,6 +1281,19 @@ private final class VoiceActionButton: NSButton {
             item(s.label, #selector(pickLocalSpeed(_:)),
                  repr: String(s.value), on: abs(s.value - config.localSpeed) < 0.01)
         }
+    }
+
+    private func buildSentencePauseItems() -> [NSMenuItem] {
+        var items = sentencePauseSteps.map { step in
+            item(step.label, #selector(pickSentencePause(_:)),
+                 repr: String(step.value), on: step.value == config.sentencePause)
+        }
+        items.append(.separator())
+        let isCustom = !sentencePauseSteps.contains { $0.value == config.sentencePause }
+        items.append(item(
+            isCustom ? "Custom… (\(config.sentencePause) ms)" : "Custom…",
+            #selector(editSentencePause), repr: "", on: isCustom))
+        return items
     }
 
     private func buildStabilityItems() -> [NSMenuItem] {
@@ -1647,13 +1669,29 @@ private final class VoiceActionButton: NSButton {
         scheduleRespeak()
     }
 
+    private func setSentencePause(_ value: Int) {
+        let bounded = min(max(value, 0), 5_000)
+        config.sentencePause = bounded
+        config.save()
+        if isSpeechActive {
+            sendAudioControl("sentence-pause:\(bounded)")
+        }
+        rebuildMenu()
+    }
+
+    @objc private func pickSentencePause(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let value = Int(rawValue) else { return }
+        setSentencePause(value)
+    }
+
     @objc private func editSentencePause() {
         NSApp.setActivationPolicy(.regular)
         defer { NSApp.setActivationPolicy(.accessory) }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Sentence Pause"
-        alert.informativeText = "Milliseconds of silence between sentences (at 1\u{00D7} speed). Set to 0 for no pause."
+        alert.informativeText = "Milliseconds of actual silence between sentences. Enter a value from 0 to 5000."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 22))
@@ -1663,11 +1701,15 @@ private final class VoiceActionButton: NSButton {
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let text = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard let val = Int(text), val >= 0 else { return }
-        config.sentencePause = val
-        config.save()
-        rebuildMenu()
-        scheduleRespeak()
+        guard let value = Int(text), (0...5_000).contains(value) else {
+            let error = NSAlert()
+            error.messageText = "Invalid Sentence Pause"
+            error.informativeText = "Enter a whole number from 0 to 5000 milliseconds."
+            error.alertStyle = .warning
+            error.runModal()
+            return
+        }
+        setSentencePause(value)
     }
 
     @objc private func pickStability(_ sender: NSMenuItem) {

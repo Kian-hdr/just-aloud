@@ -92,6 +92,7 @@ class QueuePlayer: NSObject {
     private var stdinOpen = true
     private var scheduledStartFrame: AVAudioFramePosition = 0
     private var playbackToken = 0
+    private var sentencePauseOverrideMs: Int?
     private var controlTimer: Timer?
     private let controlFile = (NSTemporaryDirectory() as NSString)
         .appendingPathComponent("just_aloud_audio_control")
@@ -170,7 +171,7 @@ class QueuePlayer: NSObject {
             self.play(item)
         }
 
-        let delay = Double(item.pauseMs) / 1000.0
+        let delay = Double(sentencePauseOverrideMs ?? item.pauseMs) / 1000.0
         if delay > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: startPlaying)
         } else {
@@ -312,6 +313,11 @@ class QueuePlayer: NSObject {
             case "seek:10":
                 seek(byOutputSeconds: 10)
             default:
+                if command.hasPrefix("sentence-pause:"),
+                   let value = Int(command.dropFirst("sentence-pause:".count)),
+                   value >= 0, value <= 5_000 {
+                    sentencePauseOverrideMs = value
+                }
                 continue
             }
         }

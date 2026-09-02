@@ -4035,9 +4035,10 @@ check "just-aloud.sh: kill-wait has 10 iterations" \
 
 section "Zero-fork epoch in play_audio (no per-sentence perl)"
 
-# play_audio must NOT fork perl on every call — use cached epoch + $SECONDS
-check "just-aloud.sh: no perl fork in play_audio" \
-    "0" "$(sed -n '/^play_audio() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -c 'perl' || true)"
+# Epoch calculation must not fork Time::HiRes on every call. The afplay-only
+# fallback may use a one-shot fractional wait to honor the selected pause.
+check "just-aloud.sh: no per-call Time::HiRes epoch fork in play_audio" \
+    "0" "$(sed -n '/^play_audio() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -c 'Time::HiRes' || true)"
 
 # _BASE_EPOCH must be computed once before the pipeline loop
 check "just-aloud.sh: _BASE_EPOCH set before pipeline" \
@@ -4376,6 +4377,19 @@ if $_QP_COMPILED; then
         "2" "$_QP_NDONE"
     rm -f "$_QP_STATUS2"
 
+    # A configured pause must change real elapsed playback time, not merely be
+    # parsed. Two 50 ms files with a 700 ms second-item pause should take at
+    # least 600 ms end to end even with scheduler variance.
+    _QP_PAUSE_STATUS="${TMPDIR:-/tmp}/just-aloud_qppause_$$"
+    _QP_PAUSE_START=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.0f", time * 1000')
+    _run_with_timeout 3 bash -c \
+        "printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \"$_TEST_WAV\" '1700000000.000' '0' '50' \"$_QP_PAUSE_STATUS\" '0' '1' \"$_TEST_WAV\" '1700000001.000' '50' '60' \"$_QP_PAUSE_STATUS\" '700' '1' | \"$_QP_BIN\" play-queue"
+    _QP_PAUSE_END=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.0f", time * 1000')
+    _QP_PAUSE_ELAPSED=$((_QP_PAUSE_END - _QP_PAUSE_START))
+    check "play-queue: configured pause changes elapsed playback time" \
+        "yes" "$([ "$_QP_PAUSE_ELAPSED" -ge 600 ] && echo "yes" || echo "no")"
+    rm -f "$_QP_PAUSE_STATUS"
+
     # play-queue: exits cleanly on stdin close
     _run_with_timeout 3 bash -c "echo '' | \"$_QP_BIN\" play-queue"
     check "play-queue: exits on stdin close" \
@@ -4396,8 +4410,11 @@ check "just-aloud.sh: SENTENCE_PAUSE default is 400" \
 check "just-aloud.sh: SENTENCE_PAUSE validated as numeric" \
     "yes" "$(grep -q '_validate_num SENTENCE_PAUSE' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-check "just-aloud.sh: _PAUSE_MS computed with perl" \
-    "yes" "$(grep -q '_PAUSE_MS=.*perl.*SENTENCE_PAUSE' "$SPEAK_SH" && echo "yes" || echo "no")"
+check "just-aloud.sh: pause milliseconds remain exact at every speed" \
+    "yes" "$(grep -q '^_PAUSE_MS=\$SENTENCE_PAUSE$' "$SPEAK_SH" && echo "yes" || echo "no")"
+
+check "just-aloud.sh: afplay fallback applies sentence pause" \
+    "yes" "$(awk '/Fallback: afplay/,/PLAY_PID=/' "$SPEAK_SH" | grep -q 'ARGV\[0\].*1000' && echo "yes" || echo "no")"
 
 check "just-aloud.sh: play_audio passes pause to queue player (6 fields)" \
     "yes" "$(grep -q 'STATUS_FILE.*{3:-0}.*>&7' "$SPEAK_SH" && echo "yes" || echo "no")"
@@ -4421,7 +4438,10 @@ check "JustAloud.swift: editSentencePause handler" \
 check "JustAloud.swift: Sentence Pause menu item shows current value" \
     "yes" "$(grep -q 'Sentence Pause.*sentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
-check "JustAloud.swift: Sentence Pause uses text input dialog" \
+check "JustAloud.swift: Sentence Pause offers native preset selector" \
+    "yes" "$(grep -q 'func buildSentencePauseItems' "$SETTINGS_SWIFT" && grep -q 'func pickSentencePause' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
+
+check "JustAloud.swift: Sentence Pause supports custom text input" \
     "yes" "$(awk '/func editSentencePause/,/^    \}/' "$SETTINGS_SWIFT" | grep -q 'NSTextField' && echo "yes" || echo "no")"
 
 # just-aloud-audio.swift: pause_ms field in protocol
@@ -4433,6 +4453,9 @@ check "just-aloud-audio.swift: pauseMs in PlayItem" \
 
 check "just-aloud-audio.swift: asyncAfter for pause delay" \
     "yes" "$(grep -q 'asyncAfter.*delay' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"
+
+check "just-aloud-audio.swift: accepts live sentence pause changes" \
+    "yes" "$(grep -q 'sentence-pause:' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"
 
 check "just-aloud-audio.swift: STATUS_FILE written after pause (inside startPlaying)" \
     "yes" "$(grep -q 'let startPlaying' "$SCRIPT_DIR/just-aloud-audio.swift" && echo "yes" || echo "no")"

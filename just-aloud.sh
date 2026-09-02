@@ -429,6 +429,9 @@ play_audio() {
         fi
         [ -z "$duration" ] && duration=$(afinfo "$TMP_FILE" 2>/dev/null | awk '/estimated duration/{print $3}')
         printf '%s\n%s\n%s\n%s\n' "$_epoch" "${duration:-0}" "${1:-0}" "${2:-0}" > "$STATUS_FILE"
+        if [ "${3:-0}" -gt 0 ] 2>/dev/null; then
+            /usr/bin/perl -e 'select undef, undef, undef, $ARGV[0] / 1000' "${3:-0}"
+        fi
         afplay -r "$PLAYBACK_SPEED" -q 1 "$TMP_FILE" &
         PLAY_PID=$!
     fi
@@ -534,13 +537,9 @@ if [ -x "$_AUDIO_TOOL" ] && [ -z "$JUST_ALOUD_NO_QUEUE_PLAYER" ]; then
     rm -f "$_AUDIO_IN" "$_AUDIO_OUT"  # safe: open FDs keep pipes alive after unlink
 fi
 
-# Compute effective inter-sentence pause (scales inversely with speed).
-if [ "$TTS_BACKEND" = "local" ]; then
-    _EFF_SPEED="$LOCAL_SPEED"
-else
-    _EFF_SPEED=$(/usr/bin/perl -e "printf '%.4f', $SPEED * $PLAYBACK_SPEED")
-fi
-_PAUSE_MS=$(/usr/bin/perl -e "printf '%d', $SENTENCE_PAUSE / $_EFF_SPEED")
+# The configured milliseconds represent real elapsed silence. Do not scale them
+# by speech speed: a 1000 ms selection must remain one second at every speed.
+_PAUSE_MS=$SENTENCE_PAUSE
 
 if [ "$TTS_BACKEND" = "local" ]; then
     # ── Local TTS (mlx-audio / Kokoro) ───────────────────────────

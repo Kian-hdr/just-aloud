@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Fixed the sentence-pause control so the chosen duration is real elapsed
+  silence rather than shrinking as playback speed increases.
+- Added clear pause presets, a validated custom value, live updates for active
+  playback, and matching behavior in the fallback audio player.
+
 ## v1.1.0
 
 ### Highlights

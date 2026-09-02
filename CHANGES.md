@@ -5,6 +5,14 @@ This file records the independent downstream work relative to
 
 Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
 
+## Unreleased
+
+- Fixed sentence-pause timing so the selected milliseconds remain exact at
+  every playback speed and are also honored by the `afplay` fallback.
+- Replaced the free-form-only pause control with a native preset submenu plus
+  a validated custom value from 0 to 5000 milliseconds.
+- Applied pause changes to an active audio queue at the next sentence boundary.
+
 ## 0.9.1
 
 - Added a native first-launch welcome and setup window with adaptive icon,
