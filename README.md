@@ -21,6 +21,13 @@ private multi-voice library.
 |---|---|
 | ![Just Aloud welcome screen in dark appearance](Documentation/Screenshots/welcome-dark.png) | ![Just Aloud welcome screen in light appearance](Documentation/Screenshots/welcome-light.png) |
 
+## Set up with your AI agent
+
+**[Copy the setup prompt into your agent's chat](SETUP-PROMPT.md).** No placeholders
+need editing. Use an agent with access to your Mac; it will check compatibility,
+download and verify the installer, preserve existing settings, and guide any
+permissions or configuration you need to complete yourself.
+
 ## Features
 
 - Pause and resume without losing position
