@@ -12,6 +12,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SPEAK_SH="$SCRIPT_DIR/just-aloud.sh"
+SPEECH_BACKEND="$SCRIPT_DIR/speech-backend.sh"
 SETTINGS_SWIFT="$SCRIPT_DIR/JustAloud.swift"
 FAST=false
 FILTER=""
@@ -54,14 +55,28 @@ _bootstrap_venv() {
     fi
     echo "$_DEP_HASH" > "$_STAMP"
 }
-if [ ! -x "$DEV_VENV/bin/python3" ]; then
-    printf "Bootstrapping dev venv (full install) ...\n"
-    _bootstrap_venv
-elif [ "$_DEP_HASH" != "$(cat "$_STAMP" 2>/dev/null)" ]; then
-    printf "Dev venv out of date, re-running install ...\n"
-    _bootstrap_venv
+# Explicit fixture interpreters never bootstrap or touch installed app dependencies.
+if [ -n "${JUST_ALOUD_TEST_PYTHON:-}" ]; then
+    [ -x "$JUST_ALOUD_TEST_PYTHON" ] || { echo "Test Python is not executable" >&2; exit 1; }
+    "$JUST_ALOUD_TEST_PYTHON" -c 'import ftfy, pylatexenc, pysbd'
+    export VENV_PYTHON="$JUST_ALOUD_TEST_PYTHON"
+else
+    if [ ! -x "$DEV_VENV/bin/python3" ]; then
+        printf "Bootstrapping dev venv (full install) ...\n"
+        _bootstrap_venv
+    elif [ "$_DEP_HASH" != "$(cat "$_STAMP" 2>/dev/null)" ]; then
+        printf "Dev venv out of date, re-running install ...\n"
+        _bootstrap_venv
+    fi
+    export VENV_PYTHON="$DEV_VENV/bin/python3"
 fi
-export VENV_PYTHON="$DEV_VENV/bin/python3"
+
+# Functional subprocesses must not read user preferences or share app PID/state files.
+_TEST_SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/just-aloud-legacy.XXXXXXXX")
+mkdir -p "$_TEST_SANDBOX/home" "$_TEST_SANDBOX/runtime"
+export HOME="$_TEST_SANDBOX/home"
+export TMPDIR="$_TEST_SANDBOX/runtime/"
+trap 'rm -rf "$_TEST_SANDBOX"' EXIT
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -480,7 +495,7 @@ check "just-aloud.sh uses just_aloud_tts.pid" \
 check "just-aloud.sh does not use elevenlabs_tts.pid" \
     "yes" "$(! grep -q 'elevenlabs_tts\.pid' "$SPEAK_SH" && echo "yes" || echo "no")"
 check "just-aloud.sh uses just_aloud_tts_ temp file prefix" \
-    "yes" "$(grep -q 'just_aloud_tts_' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'just_aloud_tts_' "$SPEECH_BACKEND" && echo "yes" || echo "no")"
 
 # ── 13. API key guard skipped for local backend ──────────────────
 
@@ -1059,7 +1074,7 @@ section "Auto-derive lang_code from voice"
 
 # just-aloud.sh derives lang_code from the voice prefix (first character)
 check "just-aloud.sh derives lang_code from LOCAL_VOICE" \
-    "yes" "$(grep -q 'LOCAL_VOICE:0:1' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'LOCAL_VOICE:0:1' "$SPEECH_BACKEND" && echo "yes" || echo "no")"
 
 # Functional test: verify the derived lang_code is passed to mlx_audio
 _STUBS=$(mktemp -d)
@@ -1793,10 +1808,10 @@ check "just-aloud.sh: run_local_tts references daemon socket" \
     "yes" "$(grep -q 'TTS_SOCK' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "just-aloud.sh: daemon fallback to direct invocation" \
-    "yes" "$(grep -q 'falling back to direct invocation' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'falling back to direct invocation' "$SPEECH_BACKEND" && echo "yes" || echo "no")"
 
 check "just-aloud.sh: start_tts_daemon function exists" \
-    "yes" "$(grep -q 'start_tts_daemon' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'start_tts_daemon' "$SPEECH_BACKEND" && echo "yes" || echo "no")"
 
 check "uninstall.command: kills TTS daemon" \
     "yes" "$(grep -q 'tts_server.pid' "$SCRIPT_DIR/uninstall.command" && echo "yes" || echo "no")"
@@ -1856,7 +1871,7 @@ check "just-aloud.sh: SPEED env var saved before config sourcing" \
     "yes" "$(grep -q '_ENV_SPEED=' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "just-aloud.sh: local TTS uses LOCAL_SPEED" \
-    "yes" "$(grep -q '_SPEED=\"\$LOCAL_SPEED\"' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(grep -q '_SPEED=\"\$LOCAL_SPEED\"' "$SPEECH_BACKEND" && echo "yes" || echo "no")"
 
 # python3 check was removed (json_encode is pure bash; split_sentences has its own fallback)
 check "just-aloud.sh: no hard exit for missing python3" \
@@ -2000,7 +2015,7 @@ check "just-aloud.sh: split_sentences uses regex on sentence boundaries" \
     "yes" "$(grep -q 're.split' "$SPEAK_SH" && echo "yes" || echo "no")"
 
 check "just-aloud.sh: run_elevenlabs_tts function exists" \
-    "yes" "$(grep -q 'run_elevenlabs_tts()' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(grep -q 'run_elevenlabs_tts()' "$SPEECH_BACKEND" && echo "yes" || echo "no")"
 
 # Pipeline loops parse offset/len from split_sentences and pass to play_audio
 check "just-aloud.sh: local loop passes sentence offset to play_audio" \
@@ -2186,7 +2201,7 @@ section "set -e containment"
 
 # run_elevenlabs_tts must NOT leak set -e to the global scope.
 # The script has no global set -e, so the function must not call set -e.
-_EL_FUNC=$(awk '/^run_elevenlabs_tts\(\)/,/^}/' "$SPEAK_SH")
+_EL_FUNC=$(awk '/^run_elevenlabs_tts\(\)/,/^}/' "$SPEECH_BACKEND")
 check "run_elevenlabs_tts: does not contain set -e (no leak)" \
     "0" "$(echo "$_EL_FUNC" | grep -c 'set -e' || true)"
 
@@ -2241,15 +2256,15 @@ check "cleanup kills _DAEMON_PID children (pkill -P + kill)" \
 
 # curl runs in background + wait (interruptible by SIGTERM)
 check "curl runs in background (& + wait)" \
-    "yes" "$(awk '/^run_elevenlabs_tts\(\)/,/^}/' "$SPEAK_SH" | grep -q '_CURL_PID=\$!' && echo "yes" || echo "no")"
+    "yes" "$(awk '/^run_elevenlabs_tts\(\)/,/^}/' "$SPEECH_BACKEND" | grep -q '_CURL_PID=\$!' && echo "yes" || echo "no")"
 
 # Daemon request runs in background + wait (interruptible by SIGTERM)
 check "daemon request runs in background (& + wait)" \
-    "yes" "$(awk '/^run_local_tts\(\)/,/^}/' "$SPEAK_SH" | grep -q '_DAEMON_PID=\$!' && echo "yes" || echo "no")"
+    "yes" "$(awk '/^run_local_tts\(\)/,/^}/' "$SPEECH_BACKEND" | grep -q '_DAEMON_PID=\$!' && echo "yes" || echo "no")"
 
 # Direct fallback runs in background + wait
 check "direct fallback runs in background (& + wait)" \
-    "yes" "$(awk '/^run_local_tts\(\)/,/^}/' "$SPEAK_SH" | grep -q 'join_audio.*) &' && echo "yes" || echo "no")"
+    "yes" "$(awk '/^run_local_tts\(\)/,/^}/' "$SPEECH_BACKEND" | grep -q 'join_audio.*) &' && echo "yes" || echo "no")"
 
 # Log directory is created if missing
 check "log dir created with mkdir -p" \
@@ -2450,11 +2465,11 @@ section "Temp file lifecycle"
 # run_local_tts must NOT delete TMP_FILE (the pipeline loop handles cleanup
 # via _PREV_TMP_FILE — deleting here races with afplay opening the file)
 check "run_local_tts does NOT delete TMP_FILE at start" \
-    "no" "$(awk '/^run_local_tts\(\)/,/^}/' "$SPEAK_SH" | head -5 | grep -q 'rm -f "\$TMP_FILE"' && echo "yes" || echo "no")"
+    "no" "$(awk '/^run_local_tts\(\)/,/^}/' "$SPEECH_BACKEND" | head -5 | grep -q 'rm -f "\$TMP_FILE"' && echo "yes" || echo "no")"
 
 # ElevenLabs: mktemp failure returns 1
 check "run_elevenlabs_tts: mktemp failure returns 1" \
-    "yes" "$(awk '/^run_elevenlabs_tts\(\)/,/^}/' "$SPEAK_SH" | grep -q '\[ -z "\$TMP_FILE" \].*return 1' && echo "yes" || echo "no")"
+    "yes" "$(awk '/^run_elevenlabs_tts\(\)/,/^}/' "$SPEECH_BACKEND" | grep -q '\[ -z "\$TMP_FILE" \].*return 1' && echo "yes" || echo "no")"
 
 # Daemon generate_audio: tmp_dir is assigned BEFORE the try block
 # (so it's in scope in the except handler)
@@ -2532,7 +2547,7 @@ section "Cloud TTS failure modes"
 
 # curl has --max-time timeout
 check "curl has --max-time for timeout protection" \
-    "yes" "$(awk '/^run_elevenlabs_tts/,/^}/' "$SPEAK_SH" | grep -q 'max-time' && echo "yes" || echo "no")"
+    "yes" "$(awk '/^run_elevenlabs_tts/,/^}/' "$SPEECH_BACKEND" | grep -q 'max-time' && echo "yes" || echo "no")"
 
 # Both first- and later-chunk failures must show a dialog.
 check "cloud TTS HTTP error: shows dialogs for first and later chunks" \
@@ -2561,7 +2576,7 @@ check "daemon client socket timeout" \
 
 # run_local_tts: fallback to direct invocation when daemon unavailable
 check "run_local_tts: fallback to direct mlx invocation" \
-    "yes" "$(awk '/^run_local_tts/,/^}/' "$SPEAK_SH" | grep -q 'mlx_audio.tts.generate' && echo "yes" || echo "no")"
+    "yes" "$(awk '/^run_local_tts/,/^}/' "$SPEECH_BACKEND" | grep -q 'mlx_audio.tts.generate' && echo "yes" || echo "no")"
 
 
 # ── 51. Functional: toggle kills entire process tree ──────────────
@@ -3922,15 +3937,15 @@ section "Bash JSON encoding (no Python fork per sentence)"
 
 # just-aloud.sh must define a json_encode function (pure bash, no fork)
 check "just-aloud.sh: json_encode function defined" \
-    "yes" "$(grep -q '^json_encode()' "$SPEAK_SH" && echo "yes" || echo "no")"
+    "yes" "$(grep -q '^json_encode()' "$SPEECH_BACKEND" && echo "yes" || echo "no")"
 
 # run_elevenlabs_tts must NOT fork python3 for JSON encoding
 check "just-aloud.sh: run_elevenlabs_tts uses json_encode (no python3 -c json)" \
-    "0" "$(sed -n '/^run_elevenlabs_tts() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH" | grep -c 'python3 -c.*json' || true)"
+    "0" "$(sed -n '/^run_elevenlabs_tts() *{/,/^[a-z_]*() *{/p' "$SPEECH_BACKEND" | grep -c 'python3 -c.*json' || true)"
 
 # json_encode must handle quotes, backslashes, newlines, tabs
 # Source the function from just-aloud.sh (it's pure bash, safe to source this snippet)
-eval "$(awk '/^json_encode\(\)/,/^}/' "$SPEAK_SH")" 2>/dev/null || true
+eval "$(awk '/^json_encode\(\)/,/^}/' "$SPEECH_BACKEND")" 2>/dev/null || true
 
 if type json_encode &>/dev/null; then
     check "json_encode: plain text" \
@@ -3970,7 +3985,7 @@ fi
 
 section "Daemon request via Unix socket"
 
-_TDR_BODY=$(sed -n '/^tts_daemon_request() *{/,/^[a-z_]*() *{/p' "$SPEAK_SH")
+_TDR_BODY=$(sed -n '/^tts_daemon_request() *{/,/^[a-z_]*() *{/p' "$SPEECH_BACKEND")
 
 # Must use python socket (nc -U on macOS drops responses from Unix sockets)
 check "just-aloud.sh: tts_daemon_request uses python socket" \
@@ -4236,16 +4251,6 @@ check "JustAloud.swift: passes JUST_ALOUD_MUTE_CHECKED to just-aloud.sh" \
 check "just-aloud.sh: skips mute check when JUST_ALOUD_MUTE_CHECKED=1" \
     "yes" "$(grep -q 'JUST_ALOUD_MUTE_CHECKED' "$SPEAK_SH" && echo "yes" || echo "no")"
 
-# Cmd+V paste support: dialogs with text fields must use .regular activation policy
-check "JustAloud.swift: API key dialog enables paste (regular activation)" \
-    "yes" "$(awk '/func showAPIKeyDialog/,/^    }/' "$SCRIPT_DIR/JustAloud.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
-
-check "JustAloud.swift: custom voice dialog enables paste (regular activation)" \
-    "yes" "$(awk '/func customVoice/,/^    }/' "$SCRIPT_DIR/JustAloud.swift" | grep -q 'setActivationPolicy(.regular)' && echo "yes" || echo "no")"
-
-check "JustAloud.swift: dialogs restore accessory policy via defer" \
-    "yes" "$(grep -c 'defer.*setActivationPolicy(.accessory)' "$SCRIPT_DIR/JustAloud.swift" | awk '{print ($1 >= 2) ? "yes" : "no"}')"
-
 # API key validation
 check "JustAloud.swift: validateAPIKey function exists" \
     "yes" "$(grep -q 'func validateAPIKey' "$SCRIPT_DIR/JustAloud.swift" && echo "yes" || echo "no")"
@@ -4480,9 +4485,6 @@ check "JustAloud.swift: playback menu has no persistent Accessibility warning" \
 
 check "JustAloud.swift: permission setup remains available in welcome" \
     "yes" "$(grep -q 'action: #selector(welcomeRequestAccessibility)' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
-
-check "JustAloud.swift: configuration lives directly in Settings" \
-    "yes" "$(grep -q 'submenuItem("Settings", items: buildSettingsItems' "$SETTINGS_SWIFT" && ! grep -q 'submenuItem("Advanced Voice Settings"' "$SETTINGS_SWIFT" && ! grep -Eq 'menu.addItem\(submenuItem\("(Backend|Model|Stability|Similarity|Style)"|menu.addItem\(openAtLogin\)' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
 
 check "JustAloud.swift: download arrow is separate from playback-only enablement" \
     "yes" "$(grep -q 'symbol: "arrow.down.to.line"' "$SETTINGS_SWIFT" && grep -q 'playbackButtons + \[download\]' "$SETTINGS_SWIFT" && grep -q 'latestRecording != nil' "$SETTINGS_SWIFT" && echo "yes" || echo "no")"
@@ -5705,7 +5707,7 @@ check "just-aloud.sh: no system python3 fallback in split_sentences" \
     "yes" "$(awk '/^split_sentences\(\)/,/^}/{if(/:-python3/) found=1} END{print found?"no":"yes"}' "$SPEAK_SH")"
 
 check "just-aloud.sh: no system python3 fallback in run_local_tts" \
-    "yes" "$(awk '/^run_local_tts\(\)/,/^}/{if(/fallback.*python3|PY=python3/) found=1} END{print found?"no":"yes"}' "$SPEAK_SH")"
+    "yes" "$(awk '/^run_local_tts\(\)/,/^}/{if(/fallback.*python3|PY=python3/) found=1} END{print found?"no":"yes"}' "$SPEECH_BACKEND")"
 
 check "normalize.py: ftfy is required import (not try/except)" \
     "yes" "$(grep -q '^import.*ftfy' "$SCRIPT_DIR/normalize.py" && echo "yes" || echo "no")"

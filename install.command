@@ -284,6 +284,7 @@ fi
 # ── Install speak.sh ──────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
 cp -f "$SCRIPT_DIR/just-aloud.sh" "$INSTALL_DIR/just-aloud"
+cp -f "$SCRIPT_DIR/speech-backend.sh" "$INSTALL_DIR/speech-backend.sh"
 cp -f "$SCRIPT_DIR/normalize.py" "$INSTALL_DIR/just-aloud-normalize.py"
 cp -f "$SCRIPT_DIR/tts_server.py" "$INSTALL_DIR/just-aloud-tts-server.py"
 cp -f "$SCRIPT_DIR/install-local.sh" "$INSTALL_DIR/just-aloud-install-local"

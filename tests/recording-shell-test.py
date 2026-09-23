@@ -21,6 +21,7 @@ with tempfile.TemporaryDirectory(prefix='just-aloud-recording-shell-') as temp:
         out.setparams((1, 2, 44100, 0, 'NONE', 'not compressed'))
         out.writeframes(b'\0\0' * 4410)
     shutil.copy(repo / 'just-aloud.sh', bin_dir / 'just-aloud')
+    shutil.copy(repo / 'speech-backend.sh', bin_dir / 'speech-backend.sh')
     (bin_dir / 'just-aloud-audio').write_text('''#!/bin/bash
 if [ "$1" = play-queue ]; then
   while IFS= read -r line; do printf '0.1\\nDONE\\n'; done

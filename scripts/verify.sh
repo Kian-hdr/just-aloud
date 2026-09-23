@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-bash -n just-aloud.sh install-local.sh install.command uninstall.command release.sh scripts/*.sh
-python3 -m py_compile normalize.py tts_server.py
+bash -n just-aloud.sh speech-backend.sh headless-generate.sh install-local.sh install.command uninstall.command release.sh scripts/*.sh
+python3 -m py_compile normalize.py tts_server.py agent/server.py
+python3 agent/test_server.py
+python3 agent/test_install.py
 ./tests/enhanced-test.sh
 ./tests/distribution-test.sh
 bash tests/test.sh --fast

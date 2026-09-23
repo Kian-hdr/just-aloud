@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "transport": "stdio",
+  "features": [
+    {
+      "id": "narration",
+      "title": "Narration and previews",
+      "description": "Read your exact wording with ElevenLabs or optional local Kokoro. Search voices and select a stable voice ID."
+    },
+    {
+      "id": "presets",
+      "title": "Voices and delivery",
+      "description": "Save narration presets. Set supported model controls, native speed, pronunciation dictionary references and explicit pauses."
+    },
+    {
+      "id": "jobs",
+      "title": "Progress and cancellation",
+      "description": "Check jobs and stop local work. The assistant connection must stay open during generation."
+    },
+    {
+      "id": "export",
+      "title": "Save generated audio",
+      "description": "Export completed narration as WAV without generating or paying again. Existing files are never overwritten."
+    }
+  ],
+  "requirements": [
+    "Python 3.9 or later is required for the connector; it is not bundled.",
+    "ElevenLabs needs the API key saved in Just Aloud and provider credits.",
+    "Local Kokoro needs the optional Just Aloud runtime on Apple Silicon."
+  ],
+  "clients": [
+    {
+      "name": "MCP over standard input/output",
+      "status": "Verified by local protocol tests."
+    },
+    {
+      "name": "Codex",
+      "status": "Setup command provided; current client attachment is not detectable by the app."
+    },
+    {
+      "name": "Other local MCP clients",
+      "status": "Manual stdio configuration; individual integrations have not been tested."
+    }
+  ],
+  "examples": [
+    "Find a warm British voice, preview this paragraph, and save the WAV to Downloads.",
+    "Save my selected voice and delivery as Document narrator, then use it for this text.",
+    "Check my narration job and export its completed audio without generating it again."
+  ],
+  "limitations": [
+    "Closing the assistant connection cancels active narration; completed audio and request keys remain on this Mac.",
+    "Cancellation cannot refund cloud work already accepted. Reuse the same request key after an uncertain error.",
+    "No HTTP server or remote connection. Client setup is separate from installing the connector.",
+    "Voice quality and pronunciation require listening review."
+  ],
+  "privacy": "ElevenLabs receives supplied text and voice settings. Kokoro synthesis stays on this Mac after its optional downloads. Credentials remain in Keychain; generated audio and job records are stored privately on this Mac.",
+  "cost": "Cloud narration uses ElevenLabs credits. Discovery does not synthesize speech. Replaying and exporting saved results make no new synthesis request.",
+  "local_voices": [
+    {
+      "voice_id": "bf_lily",
+      "name": "Lily",
+      "description": "Lily — British, bright",
+      "provider": "local"
+    },
+    {
+      "voice_id": "af_heart",
+      "name": "Heart",
+      "description": "Heart — warm",
+      "provider": "local"
+    },
+    {
+      "voice_id": "af_bella",
+      "name": "Bella",
+      "description": "Bella — soft",
+      "provider": "local"
+    },
+    {
+      "voice_id": "af_nova",
+      "name": "Nova",
+      "description": "Nova — confident",
+      "provider": "local"
+    },
+    {
+      "voice_id": "af_sarah",
+      "name": "Sarah",
+      "description": "Sarah — gentle",
+      "provider": "local"
+    },
+    {
+      "voice_id": "af_sky",
+      "name": "Sky",
+      "description": "Sky — bright",
+      "provider": "local"
+    },
+    {
+      "voice_id": "am_adam",
+      "name": "Adam",
+      "description": "Adam — deep",
+      "provider": "local"
+    },
+    {
+      "voice_id": "am_echo",
+      "name": "Echo",
+      "description": "Echo — clear",
+      "provider": "local"
+    },
+    {
+      "voice_id": "am_eric",
+      "name": "Eric",
+      "description": "Eric — steady",
+      "provider": "local"
+    },
+    {
+      "voice_id": "am_michael",
+      "name": "Michael",
+      "description": "Michael — warm",
+      "provider": "local"
+    },
+    {
+      "voice_id": "bf_emma",
+      "name": "Emma",
+      "description": "Emma — British, warm",
+      "provider": "local"
+    },
+    {
+      "voice_id": "bm_george",
+      "name": "George",
+      "description": "George — British, deep",
+      "provider": "local"
+    }
+  ]
+}

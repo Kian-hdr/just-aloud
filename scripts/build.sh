@@ -7,8 +7,8 @@ APP="$BUILD_DIR/Just Aloud.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
-VERSION="${VERSION:-1.0.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-3}"
+VERSION="${VERSION:-1.1.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-4}"
 SWIFT_CACHE="${SWIFT_CACHE:-$BUILD_DIR/swift-module-cache}"
 
 case "$APP" in
@@ -27,7 +27,16 @@ done
 xcrun lipo -create "$BUILD_DIR/JustAloud-arm64" "$BUILD_DIR/JustAloud-x86_64" -output "$MACOS/JustAloud"
 xcrun lipo -create "$BUILD_DIR/just-aloud-audio-arm64" "$BUILD_DIR/just-aloud-audio-x86_64" -output "$RESOURCES/just-aloud-audio"
 
+# The connector is shipped with the app; setup requires no checkout or compiler.
+mkdir -p "$RESOURCES/agent" "$RESOURCES/scripts"
+cp "$ROOT"/agent/*.py "$RESOURCES/agent/"
+cp "$ROOT/agent/capabilities.json" "$ROOT/agent/README.md" "$RESOURCES/agent/"
+cp "$ROOT/scripts/install-agent.sh" "$RESOURCES/scripts/install-agent.sh"
+chmod 755 "$RESOURCES/scripts/install-agent.sh"
+
 cp "$ROOT/just-aloud.sh" "$RESOURCES/just-aloud"
+cp "$ROOT/speech-backend.sh" "$RESOURCES/speech-backend.sh"
+cp "$ROOT/headless-generate.sh" "$RESOURCES/headless-generate.sh"
 cp "$ROOT/normalize.py" "$RESOURCES/just-aloud-normalize.py"
 cp "$ROOT/tts_server.py" "$RESOURCES/just-aloud-tts-server.py"
 cp "$ROOT/install-local.sh" "$RESOURCES/just-aloud-install-local"

@@ -47,6 +47,7 @@ step "App bundle removed"
 
 # ── Remove scripts ────────────────────────────────────────────────
 rm -f "$HOME/.local/bin/just-aloud"
+rm -f "$HOME/.local/bin/speech-backend.sh"
 rm -f "$HOME/.local/bin/just-aloud-tts-server.py"
 rm -f "$HOME/.local/bin/just-aloud-normalize.py"
 rm -f "$HOME/.local/bin/just-aloud-install-local"
