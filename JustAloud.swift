@@ -1,4 +1,5 @@
 import Cocoa
+import SwiftUI
 import ApplicationServices
 import CoreAudio
 import Darwin
@@ -415,6 +416,332 @@ private final class VoiceActionButton: NSButton {
     var voiceId = ""
 }
 
+// The existing direct-swiftc entry point stays intact. Settings has its own
+// presentation model and view types; AppDelegate retains persistence/services.
+private struct SettingsOption: Identifiable, Equatable {
+    let id: String
+    let title: String
+}
+
+private struct SettingsSnapshot: Equatable {
+    var engine = "elevenlabs"
+    var model = "eleven_flash_v2_5"
+    var voice = ""
+    var voices: [SettingsOption] = []
+    var speed = 1.0
+    var stability = 0.5
+    var similarity = 0.75
+    var sentencePause = 400.0
+    var loginEnabled = false
+    var loginNeedsApproval = false
+}
+
+private final class SettingsPresentation: ObservableObject {
+    @Published var values = SettingsSnapshot()
+    var select: (String, String) -> Void = { _, _ in }
+    var manageKey: () -> Void = {}
+    var toggleLogin: () -> Void = {}
+
+    func binding<Value>(_ key: WritableKeyPath<SettingsSnapshot, Value>, action: String) -> Binding<Value> {
+        Binding(get: { self.values[keyPath: key] }, set: { value in
+            self.select(action, String(describing: value))
+        })
+    }
+}
+
+private struct SettingsValueSlider: View {
+    let title: String
+    let detail: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let display: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(display).monospacedDigit().foregroundStyle(.secondary)
+            }
+            // A continuous native track avoids the automatic dotted tick row.
+            // Quantize the binding to retain each setting's existing increments.
+            Slider(value: Binding(get: { value }, set: { proposed in
+                value = min(max((proposed / step).rounded() * step, range.lowerBound), range.upperBound)
+            }), in: range)
+                .accessibilityLabel(title)
+                .accessibilityValue(display)
+                .accessibilityAdjustableAction { direction in
+                    switch direction {
+                    case .increment: value = min(value + step, range.upperBound)
+                    case .decrement: value = max(value - step, range.lowerBound)
+                    @unknown default: break
+                    }
+                }
+            Text(detail).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+// Connector setup is deliberately independent of the speech preferences and
+// Keychain. A launcher on disk is installation evidence, never connection proof.
+private struct ConnectorCapabilities: Decodable {
+    struct Feature: Decodable, Identifiable { let id: String; let title: String; let description: String }
+    struct Client: Decodable { let name: String; let status: String }
+    let features: [Feature]
+    let requirements: [String]
+    let clients: [Client]
+    let examples: [String]
+    let limitations: [String]
+    let privacy: String
+    let cost: String
+}
+
+private struct AIConnectorSettingsSection: View {
+    @State private var installed = false
+    @State private var needsUpdate = false
+    @State private var installing = false
+    @State private var message: String?
+    @State private var setupExpanded = false
+    private let resources = Bundle.main.resourceURL
+    private var launcher: String { NSHomeDirectory() + "/.local/bin/just-aloud-agent" }
+    private var runtime: String { NSHomeDirectory() + "/.local/share/just-aloud/agent-connector" }
+    private var installer: URL? { resources?.appendingPathComponent("scripts/install-agent.sh") }
+    private var capabilities: ConnectorCapabilities? {
+        guard let url = resources?.appendingPathComponent("agent/capabilities.json"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(ConnectorCapabilities.self, from: data)
+    }
+    private var codexCommand: String {
+        "codex mcp add just-aloud -- '" + launcher.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+    private var clientJSON: String {
+        let config = ["mcpServers": ["just-aloud": ["command": launcher, "args": [] as [String]]]] as [String: Any]
+        return (try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+    private func copy(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        message = "Copied to clipboard."
+    }
+    private func refresh() {
+        let fm = FileManager.default
+        let required = ["agent/server.py", "agent/capabilities.json", "speech-backend.sh", "headless-generate.sh", "tts_server.py"]
+        installed = fm.isExecutableFile(atPath: launcher)
+            && required.allSatisfy { fm.fileExists(atPath: runtime + "/" + $0) }
+            && fm.isExecutableFile(atPath: runtime + "/just-aloud-audio")
+        needsUpdate = false
+        if let resources, installed {
+            var pairs = [("agent/capabilities.json", "agent/capabilities.json"),
+                         ("speech-backend.sh", "speech-backend.sh"),
+                         ("headless-generate.sh", "headless-generate.sh"),
+                         ("just-aloud-tts-server.py", "tts_server.py"),
+                         ("just-aloud-audio", "just-aloud-audio")]
+            let pythonFiles = (try? fm.contentsOfDirectory(atPath: resources.appendingPathComponent("agent").path)) ?? []
+            pairs += pythonFiles.filter { $0.hasSuffix(".py") }.map { ("agent/" + $0, "agent/" + $0) }
+            needsUpdate = pairs.contains { source, destination in
+                (try? Data(contentsOf: resources.appendingPathComponent(source)))
+                    != (try? Data(contentsOf: URL(fileURLWithPath: runtime + "/" + destination)))
+            }
+        }
+
+    }
+    private func install() {
+        guard let installer else { return }
+        installing = true
+        message = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [installer.path]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            let result: String
+            do {
+                try process.run()
+                let output = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                result = process.terminationStatus == 0
+                    ? "Connector installed. Configure your assistant below, then start a fresh session. Restart existing connections after an update."
+                    : String(data: output, encoding: .utf8) ?? "Installation failed. See setup requirements."
+            } catch { result = "Could not start setup: \(error.localizedDescription)" }
+            DispatchQueue.main.async {
+                installing = false
+                message = result
+                setupExpanded = true
+                refresh()
+            }
+        }
+    }
+    var body: some View {
+        Section {
+            Text("Let an AI assistant use Just Aloud to find voices, create narration, and save audio.")
+                .fixedSize(horizontal: false, vertical: true)
+            LabeledContent("Installation", value: installed ? (needsUpdate ? "Update available" : "Files installed") : "Not installed or incomplete")
+            Text("Runtime readiness is checked by setup and your assistant; file presence does not prove a working connection.")
+                .font(.caption).foregroundStyle(.secondary)
+            LabeledContent("Assistant connection", value: "Check in your assistant")
+                .foregroundStyle(.secondary)
+            HStack {
+                Button(installed ? "Update Connector…" : "Install Connector…", action: install)
+                    .disabled(installing || installer.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true)
+                if installing { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Refresh", action: refresh).disabled(installing)
+            }
+            if let message {
+                Text(message).font(.callout).foregroundStyle(.secondary)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            if let capabilities {
+                DisclosureGroup("What your assistant can do") {
+                    ForEach(capabilities.features) { feature in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(feature.title).fontWeight(.medium)
+                            Text(feature.description).foregroundStyle(.secondary)
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
+                    }
+                }
+                DisclosureGroup("Connect your assistant", isExpanded: $setupExpanded) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Install the connector, then configure a local MCP client. The app cannot detect whether an assistant is attached.")
+                        ForEach(capabilities.requirements, id: \.self) { Text($0).foregroundStyle(.secondary) }
+                        Link("Get Python", destination: URL(string: "https://www.python.org/downloads/macos/")!)
+                        Text("Codex").fontWeight(.medium)
+                        Text(codexCommand).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        Button("Copy Codex setup command") { copy(codexCommand) }
+                        Text("Other local MCP clients").fontWeight(.medium)
+                        Text("Use the absolute command below with no arguments, environment keys or URL. Client configuration formats vary.")
+                        Text(launcher).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        HStack {
+                            Button("Copy command path") { copy(launcher) }
+                            Button("Copy JSON example") { copy(clientJSON) }
+                        }
+                        ForEach(capabilities.clients, id: \.name) { client in
+                            Text("\(client.name): \(client.status)").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("Start a fresh assistant session and ask it to discover Just Aloud's tools.")
+                    }.padding(.vertical, 6)
+                }
+                DisclosureGroup("Example requests") {
+                    ForEach(capabilities.examples, id: \.self) { example in
+                        HStack(alignment: .top) {
+                            Text(example).frame(maxWidth: .infinity, alignment: .leading)
+                            Button { copy(example) } label: { Image(systemName: "doc.on.doc") }
+                                .accessibilityLabel("Copy example: " + example)
+                        }.padding(.vertical, 5)
+                    }
+                }
+                DisclosureGroup("Privacy, credits and job lifetime") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(capabilities.privacy)
+                        Text(capabilities.cost)
+                        ForEach(capabilities.limitations, id: \.self) { Text($0) }
+                    }.foregroundStyle(.secondary).padding(.vertical, 6)
+                }
+            } else {
+                Text("Connector resources are unavailable in this build. Use a complete Just Aloud app bundle.")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Label("AI Connector", systemImage: "point.3.connected.trianglepath.dotted")
+        } footer: {
+            Text("Optional setup. Installs a private copy for your user account; it does not configure clients, access your API key, or generate speech.")
+        }
+        .onAppear(perform: refresh)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
+    }
+}
+
+private struct JustAloudSettingsView: View {
+    @ObservedObject var presentation: SettingsPresentation
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Speech engine", selection: presentation.binding(\.engine, action: "engine")) {
+                    Text("ElevenLabs").tag("elevenlabs")
+                    Text("Local (Kokoro)").tag("local")
+                    Text("Automatic").tag("auto")
+                }
+                .help("Choose cloud speech, local speech, or automatic fallback.")
+                if presentation.values.engine != "local" {
+                    Picker("Model", selection: presentation.binding(\.model, action: "model")) {
+                        ForEach(knownModels, id: \.id) { model in
+                            Text(model.name).tag(model.id)
+                        }
+                    }
+                }
+                Picker("Voice", selection: presentation.binding(\.voice, action: "voice")) {
+                    ForEach(presentation.values.voices) { voice in
+                        Text(voice.title).tag(voice.id)
+                    }
+                }
+            } header: {
+                Text("Speech")
+            } footer: {
+                Text(presentation.values.engine == "local"
+                     ? "Kokoro generates speech on this Mac."
+                     : presentation.values.engine == "auto"
+                     ? "Uses ElevenLabs when available, with local Kokoro as a fallback."
+                     : "Text is sent to ElevenLabs for cloud synthesis.")
+            }
+            Section("Delivery") {
+                SettingsValueSlider(title: "Speaking speed", detail: "Slower or faster playback, with pitch preserved.",
+                    value: presentation.binding(\.speed, action: "speed"),
+                    range: presentation.values.engine == "local" ? 0.5...2.0 : 0.7...3.0,
+                    step: 0.05, display: String(format: "%.2f×", presentation.values.speed))
+                if presentation.values.engine != "local" {
+                    if presentation.values.model == "eleven_v3" {
+                        Picker("Stability", selection: presentation.binding(\.stability, action: "stability")) {
+                            Text("Creative").tag(0.0)
+                            Text("Natural").tag(0.5)
+                            Text("Robust").tag(1.0)
+                        }
+                        .pickerStyle(.segmented)
+                        LabeledContent("Similarity", value: "Not supported by this model")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        SettingsValueSlider(title: "Stability", detail: "Lower is more expressive. Higher is more consistent.",
+                            value: presentation.binding(\.stability, action: "stability"), range: 0...1,
+                            step: 0.01, display: String(format: "%.2f", presentation.values.stability))
+                        SettingsValueSlider(title: "Similarity", detail: "How closely speech matches the original voice.",
+                            value: presentation.binding(\.similarity, action: "similarity"), range: 0...1,
+                            step: 0.01, display: String(format: "%.2f", presentation.values.similarity))
+                    }
+                }
+                SettingsValueSlider(title: "Sentence pause", detail: "Silence between sentences, independent of speaking speed.",
+                    value: presentation.binding(\.sentencePause, action: "pause"), range: 0...5000,
+                    step: 50, display: String(format: "%.0f ms", presentation.values.sentencePause))
+            }
+            Section {
+                LabeledContent("ElevenLabs API key") {
+                    Button("Manage…", action: presentation.manageKey)
+                }
+            } header: {
+                Text("Account")
+            } footer: {
+                Text("Your API key is stored securely in macOS Keychain.")
+            }
+            AIConnectorSettingsSection()
+            Section("General") {
+                Toggle("Open at Login", isOn: Binding(
+                    get: { presentation.values.loginEnabled },
+                    set: { _ in presentation.toggleLogin() }))
+                if presentation.values.loginNeedsApproval {
+                    Button("Review login approval in System Settings", action: presentation.toggleLogin)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 480, idealWidth: 520, maxWidth: .infinity,
+               minHeight: 440, idealHeight: 730, maxHeight: .infinity)
+    }
+}
+
 @objc final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var config         = Config.load()
@@ -467,6 +794,8 @@ private final class VoiceActionButton: NSButton {
     private var cloudVoiceSelectionButtons: [VoiceActionButton] = []
     private var aboutWindow: NSWindow?
     private var welcomeWindow: NSWindow?
+    private var settingsWindow: NSWindow?
+    private var settingsPresentation: SettingsPresentation?
 
     // TTS daemon process (managed mode — started by this app)
     private var ttsDaemonProcess: Process?
@@ -527,7 +856,9 @@ private final class VoiceActionButton: NSButton {
         }
         recordingTimer = recordings
         RunLoop.main.add(recordings, forMode: .common)
-        if showWelcome {
+        if ProcessInfo.processInfo.environment["JUST_ALOUD_SHOW_SETTINGS"] == "1" {
+            DispatchQueue.main.async { [weak self] in self?.showSettings() }
+        } else if showWelcome {
             DispatchQueue.main.async { [weak self] in self?.showWelcome() }
         } else if ProcessInfo.processInfo.environment["JUST_ALOUD_SHOW_ABOUT"] == "1" {
             DispatchQueue.main.async { [weak self] in self?.showAbout() }
@@ -559,6 +890,8 @@ private final class VoiceActionButton: NSButton {
             command.target = self
             applicationMenu.addItem(command)
         }
+        applicationMenu.addItem(.separator())
+        applicationMenu.addItem(settingsMenuItem())
         applicationMenu.addItem(.separator())
         applicationMenu.addItem(NSMenuItem(title: "Quit Just Aloud",
             action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -1461,6 +1794,7 @@ private final class VoiceActionButton: NSButton {
 
     private func rebuildMenu() {
         statusItem.menu = buildPlaybackMenu()
+        refreshSettingsPresentation()
     }
 
     private func buildPlaybackMenu() -> NSMenu {
@@ -1498,7 +1832,7 @@ private final class VoiceActionButton: NSButton {
         menu.addItem(.separator())
 
         menu.addItem(buildCreditsStatusItem())
-        menu.addItem(submenuItem("Settings", items: buildSettingsItems(showElevenLabs: showEl)))
+        menu.addItem(settingsMenuItem())
 
         // Permission setup stays in the welcome window, not as a persistent
         // warning in the everyday playback menu.
@@ -1514,6 +1848,119 @@ private final class VoiceActionButton: NSButton {
                               keyEquivalent: "q")
         menu.addItem(quit)
         return menu
+    }
+
+    // MARK: - Single-window settings
+
+    private func settingsMenuItem() -> NSMenuItem {
+        let command = NSMenuItem(title: "Settings", action: #selector(showSettings), keyEquivalent: ",")
+        command.target = self
+        return command
+    }
+
+    @objc private func showSettings() {
+        statusItem?.menu?.cancelTracking()
+        let window: NSWindow
+        if let existing = settingsWindow {
+            window = existing
+        } else {
+            window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 730),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.title = "Just Aloud Settings"
+            window.isReleasedWhenClosed = false
+            window.isRestorable = false
+            window.tabbingMode = .disallowed
+            window.contentMinSize = NSSize(width: 480, height: 440)
+            window.delegate = self
+            // Bring this singleton to the active Space instead of activating its old desktop.
+            // canJoinAllApplications also permits use beside another app in full screen/Stage Manager.
+            window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .canJoinAllApplications]
+            settingsWindow = window
+        }
+        rebuildSettingsContent()
+        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+            ?? NSScreen.main
+        window.orderOut(nil)
+        if let visible = screen?.visibleFrame {
+            var frame = window.frame
+            frame.size.width = min(frame.width, visible.width)
+            frame.size.height = min(frame.height, visible.height)
+            frame.origin = NSPoint(x: visible.midX - frame.width / 2, y: visible.midY - frame.height / 2)
+            window.setFrame(frame, display: false)
+        }
+        // Order onto the current Space before activation, which could otherwise switch Spaces.
+        window.makeKeyAndOrderFront(nil)
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func refreshSettingsPresentation() {
+        guard let presentation = settingsPresentation else { return }
+        let local = config.ttsBackend == "local"
+        var voices = (local ? kokoroVoices : knownVoices).map { SettingsOption(id: $0.id, title: $0.name) }
+        if !local {
+            for id in config.customVoiceIds where !voices.contains(where: { $0.id == id }) {
+                voices.append(SettingsOption(id: id, title: config.customVoiceNames[id] ?? id))
+            }
+        }
+        let voice = local ? config.localVoice : config.voiceId
+        if !voices.contains(where: { $0.id == voice }) {
+            voices.append(SettingsOption(id: voice, title: voice.isEmpty ? "Select a voice" : voice))
+        }
+        let snapshot = SettingsSnapshot(engine: config.ttsBackend, model: config.modelId,
+            voice: voice, voices: voices,
+            speed: local ? config.localSpeed : config.speed * config.playbackSpeed,
+            stability: config.modelId == "eleven_v3" ? (config.stability * 2).rounded() / 2 : config.stability,
+            similarity: config.similarityBoost, sentencePause: Double(config.sentencePause),
+            loginEnabled: openAtLoginState == .on, loginNeedsApproval: openAtLoginState == .mixed)
+        if presentation.values != snapshot { presentation.values = snapshot }
+    }
+
+    private func rebuildSettingsContent() {
+        guard let window = settingsWindow else { return }
+        if settingsPresentation == nil {
+            let presentation = SettingsPresentation()
+            presentation.select = { [weak self] name, value in self?.applySettingsSelection(name, value: value) }
+            presentation.manageKey = { [weak self] in self?.manageAPIKey() }
+            presentation.toggleLogin = { [weak self] in
+                self?.toggleOpenAtLogin()
+                self?.refreshSettingsPresentation()
+            }
+            settingsPresentation = presentation
+            let hosting = NSHostingView(rootView: JustAloudSettingsView(presentation: presentation))
+            // The window owns sizing; the Form scrolls instead of extending beyond its bounds.
+            hosting.sizingOptions = []
+            hosting.autoresizingMask = [.width, .height]
+            window.contentView = hosting
+        }
+        refreshSettingsPresentation()
+    }
+
+    private func applySettingsSelection(_ name: String, value: String) {
+        let selection = NSMenuItem()
+        selection.representedObject = value
+        switch name {
+        case "engine": pickBackend(selection)
+        case "model": pickModel(selection)
+        case "voice":
+            if config.ttsBackend == "local" { pickLocalVoice(selection) }
+            else {
+                config.voiceId = value
+                config.save()
+                rebuildMenu()
+                scheduleRespeak()
+            }
+        case "speed":
+            if config.ttsBackend == "local" { pickLocalSpeed(selection) }
+            else if let speed = Double(value) { setEffectiveSpeed(speed); rebuildMenu() }
+        case "stability": pickStability(selection)
+        case "similarity": pickSimilarity(selection)
+        case "pause":
+            if let pause = Double(value) { setSentencePause(Int(pause)); rebuildMenu() }
+        default: return
+        }
+        // Also restore the real value after a cancelled engine setup dialog.
+        refreshSettingsPresentation()
     }
 
     private func buildSettingsItems(showElevenLabs showEl: Bool) -> [NSMenuItem] {
@@ -1630,7 +2077,7 @@ private final class VoiceActionButton: NSButton {
 
     private func customVoiceItem(id: String, name: String?, on: Bool) -> NSMenuItem {
         let menuItem = NSMenuItem()
-        let row = NSView(frame: NSRect(x: 0, y: 0, width: 344, height: 44))
+        let row = NSView(frame: NSRect(x: 0, y: 0, width: 344, height: 28))
 
         let displayName: String
         if let name, !name.isEmpty {
@@ -1640,7 +2087,7 @@ private final class VoiceActionButton: NSButton {
         } else {
             displayName = "Voice name unavailable"
         }
-        let indicator = NSImageView(frame: NSRect(x: 16, y: 25, width: 14, height: 14))
+        let indicator = NSImageView(frame: NSRect(x: 16, y: 7, width: 14, height: 14))
         indicator.image = voiceRadioImage(active: on)
         indicator.contentTintColor = on ? .controlAccentColor : .tertiaryLabelColor
         indicator.imageScaling = .scaleProportionallyDown
@@ -1648,14 +2095,14 @@ private final class VoiceActionButton: NSButton {
         cloudVoiceIndicators[id] = indicator
 
         let nameLabel = NSTextField(labelWithString: displayName)
-        nameLabel.frame = NSRect(x: 38, y: 23, width: 250, height: 18)
+        nameLabel.frame = NSRect(x: 38, y: 5, width: 238, height: 18)
         nameLabel.font = NSFont.menuFont(ofSize: 13)
         nameLabel.textColor = .labelColor
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.toolTip = displayName
         row.addSubview(nameLabel)
 
-        let selectButton = VoiceActionButton(frame: NSRect(x: 10, y: 20, width: 282, height: 23))
+        let selectButton = VoiceActionButton(frame: NSRect(x: 10, y: 0, width: 266, height: 28))
         selectButton.voiceId = id
         selectButton.target = self
         selectButton.action = #selector(pickCloudVoice(_:))
@@ -1667,24 +2114,22 @@ private final class VoiceActionButton: NSButton {
         row.addSubview(selectButton)
         cloudVoiceSelectionButtons.append(selectButton)
 
-        let copyButton = VoiceActionButton(frame: NSRect(x: 38, y: 4, width: 250, height: 18))
+        let copyButton = VoiceActionButton(frame: NSRect(x: 280, y: 2, width: 24, height: 24))
         copyButton.voiceId = id
         copyButton.target = self
         copyButton.action = #selector(copyCustomVoiceID(_:))
         copyButton.isBordered = false
-        copyButton.alignment = .left
-        copyButton.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
         copyButton.contentTintColor = .secondaryLabelColor
-        copyButton.title = id
+        copyButton.title = ""
         copyButton.image = NSImage(
             systemSymbolName: "doc.on.doc",
             accessibilityDescription: "Copy voice ID")
-        copyButton.imagePosition = .imageLeading
-        copyButton.toolTip = "Copy voice ID"
-        copyButton.setAccessibilityLabel("Copy voice ID \(id)")
+        copyButton.imagePosition = .imageOnly
+        copyButton.toolTip = "Copy ID for \(displayName)"
+        copyButton.setAccessibilityLabel("Copy ID for \(displayName)")
         row.addSubview(copyButton)
 
-        let removeButton = VoiceActionButton(frame: NSRect(x: 308, y: 10, width: 20, height: 24))
+        let removeButton = VoiceActionButton(frame: NSRect(x: 308, y: 2, width: 20, height: 24))
         removeButton.voiceId = id
         removeButton.target = self
         removeButton.action = #selector(removeCustomVoice(_:))
@@ -2010,7 +2455,11 @@ private final class VoiceActionButton: NSButton {
             let before = try! Data(contentsOf: URL(fileURLWithPath: configPath))
             cachedCredits = nil
             let menu = buildPlaybackMenu()
-            let settings = menu.item(withTitle: "Settings")!.submenu!
+            let settingsCommand = menu.item(withTitle: "Settings")!
+            check(settingsCommand.submenu == nil && settingsCommand.action == #selector(showSettings), "Settings opens a window directly")
+            check(settingsCommand.keyEquivalent == ",", "standard Settings shortcut")
+            let settings = NSMenu()
+            buildSettingsItems(showElevenLabs: backend != "local").forEach { settings.addItem($0) }
             check(titles(menu).suffix(3) == ["Settings", "About Just Aloud", "Quit Just Aloud"], "app commands grouped")
             for title in ["Speech Engine", "Backend", "Model", "Stability", "Similarity", "API Key…", "Open at Login"] {
                 check(menu.item(withTitle: title) == nil, "configuration not at root: \(title)")
@@ -2045,11 +2494,38 @@ private final class VoiceActionButton: NSButton {
                 let reopened = buildPlaybackMenu()
                 check(reopened.item(withTag: 999)?.title == "Credits" && creditsStatusLabel?.stringValue == "Credits: 40 / 100 used · 40.0%", "cached credits survive rebuild")
                 config.modelId = "eleven_v3"
-                let v3 = buildPlaybackMenu().item(withTitle: "Settings")!.submenu!
+                let v3 = NSMenu()
+                buildSettingsItems(showElevenLabs: true).forEach { v3.addItem($0) }
                 check(v3.item(withTitle: "Stability")!.submenu!.items.count == 3, "v3 stability presets preserved")
                 check(v3.item(withTitle: "Similarity")!.submenu!.items.first!.isEnabled == false, "v3 unsupported hint preserved")
             }
         }
+        settingsWindow = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 520, height: 730),
+                                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        for backend in ["elevenlabs", "local"] {
+            config.ttsBackend = backend
+            config.modelId = "eleven_multilingual_v2"
+            config.stability = 0.35
+            config.similarityBoost = 0.65
+            rebuildSettingsContent()
+            let hosting = settingsWindow!.contentView!
+            check(hosting is NSHostingView<JustAloudSettingsView>, "native SwiftUI settings form")
+            check(settingsPresentation!.values.engine == backend, "current engine is represented")
+            check(settingsPresentation!.values.stability == 0.35, "exact saved stability is represented")
+            check(settingsPresentation!.values.similarity == 0.65, "exact saved similarity is represented")
+            check(!settingsPresentation!.values.voices.isEmpty, "voice choices are available")
+            rebuildSettingsContent()
+            check(settingsWindow!.contentView === hosting, "settings host remains stable across updates")
+        }
+        let bindingModel = SettingsPresentation()
+        var changedField = ""
+        var changedValue = ""
+        bindingModel.select = { changedField = $0; changedValue = $1 }
+        bindingModel.binding(\.stability, action: "stability").wrappedValue = 0.43
+        check(changedField == "stability" && changedValue == "0.43", "slider forwards exact value to app persistence")
+        check(bindingModel.values.stability == 0.5, "unaccepted edits do not replace authoritative settings")
+        settingsWindow = nil
+        settingsPresentation = nil
         for name in [NSAppearance.Name.aqua, .darkAqua] {
             let appearance = NSAppearance(named: name)!
             appearance.performAsCurrentDrawingAppearance {
@@ -2352,6 +2828,7 @@ private final class VoiceActionButton: NSButton {
         config.voiceId = sender.voiceId
         config.save()
         updateCloudVoiceSelectionIndicators()
+        refreshSettingsPresentation()
         scheduleRespeak()
     }
 
@@ -2374,13 +2851,13 @@ private final class VoiceActionButton: NSButton {
         pasteboard.clearContents()
         pasteboard.setString(sender.voiceId, forType: .string)
 
-        sender.title = "Copied"
+        sender.title = ""
         sender.image = NSImage(
             systemSymbolName: "checkmark",
             accessibilityDescription: "Copied")
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak sender] in
             guard let sender else { return }
-            sender.title = sender.voiceId
+            sender.title = ""
             sender.image = NSImage(
                 systemSymbolName: "doc.on.doc",
                 accessibilityDescription: "Copy voice ID")
@@ -2395,10 +2872,37 @@ private final class VoiceActionButton: NSButton {
         scheduleRespeak()
     }
 
+    // Resolve the invoking display before activation can switch Spaces or screens.
+    private func runCurrentSpaceAlert(_ alert: NSAlert, on screen: NSScreen?, activateApp: Bool = true) -> NSApplication.ModalResponse {
+        alert.layout()
+        let window = alert.window
+        if !activateApp {
+            // A key panel can edit text without activating windows on another Space.
+            window.styleMask.insert(.nonactivatingPanel)
+            if let panel = window as? NSPanel {
+                panel.hidesOnDeactivate = false
+                panel.becomesKeyOnlyIfNeeded = false
+            }
+        }
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .canJoinAllApplications]
+        window.isRestorable = false
+        if let visible = screen?.visibleFrame {
+            var frame = window.frame
+            frame.origin = NSPoint(x: visible.midX - frame.width / 2,
+                                   y: visible.midY - frame.height / 2)
+            window.setFrame(frame, display: false)
+        }
+        // Place the panel on the current Space before activating the menu-bar app.
+        window.makeKeyAndOrderFront(nil)
+        if activateApp { NSApp.activate(ignoringOtherApps: true) }
+        return alert.runModal()
+    }
+
     @objc private func customVoice() {
-        NSApp.setActivationPolicy(.regular)
-        defer { NSApp.setActivationPolicy(.accessory) }
-        NSApp.activate(ignoringOtherApps: true)
+        let invokingScreen = NSScreen.screens.first {
+            NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
+        } ?? NSScreen.main
+        statusItem?.menu?.cancelTracking()
         let alert = NSAlert()
         alert.messageText = "Add Custom Voice ID"
         alert.informativeText = "Enter a voice ID from elevenlabs.io/voice-library. Saved voices remain available in the Voice menu."
@@ -2411,7 +2915,7 @@ private final class VoiceActionButton: NSButton {
         field.placeholderString = "Paste your ElevenLabs voice ID"
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard runCurrentSpaceAlert(alert, on: invokingScreen, activateApp: false) == .alertFirstButtonReturn else { return }
         let val = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !val.isEmpty else { return }
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
@@ -2420,7 +2924,7 @@ private final class VoiceActionButton: NSButton {
             error.messageText = "Invalid Voice ID"
             error.informativeText = "Voice IDs may contain only letters, numbers, hyphens, and underscores."
             error.alertStyle = .warning
-            error.runModal()
+            _ = runCurrentSpaceAlert(error, on: invokingScreen, activateApp: false)
             return
         }
         if !config.customVoiceIds.contains(val) { config.customVoiceIds.append(val) }
@@ -2460,6 +2964,7 @@ private final class VoiceActionButton: NSButton {
         config.speed = min(value, 1.2)
         config.playbackSpeed = value / config.speed
         config.save()
+        refreshSettingsPresentation()
     }
 
     @objc private func speedSliderChanged(_ sender: NSSlider) {
@@ -2497,6 +3002,7 @@ private final class VoiceActionButton: NSButton {
         guard config.sentencePause != bounded else { return }
         config.sentencePause = bounded
         config.save()
+        refreshSettingsPresentation()
         if isSpeechActive {
             sendAudioControl("sentence-pause:\(bounded)")
         }
@@ -2987,93 +3493,97 @@ private final class VoiceActionButton: NSButton {
     }
 
     @objc private func showAbout() {
-        if let aboutWindow {
-            NSApp.activate(ignoringOtherApps: true)
-            aboutWindow.makeKeyAndOrderFront(nil)
-            return
+        let screen = NSScreen.screens.first {
+            NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
+        } ?? NSScreen.main
+        statusItem?.menu?.cancelTracking()
+        let window: NSWindow
+        if let existing = aboutWindow {
+            window = existing
+        } else {
+            window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 400, height: 350),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "About Just Aloud"
+            window.isReleasedWhenClosed = false
+            window.isRestorable = false
+            window.tabbingMode = .disallowed
+            window.delegate = self
+            window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .canJoinAllApplications]
+
+            let content = NSView()
+            window.contentView = content
+            let icon = NSImageView(image: NSApp.applicationIconImage)
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.imageScaling = .scaleProportionallyUpOrDown
+            icon.setAccessibilityLabel("Just Aloud app icon")
+
+            let title = NSTextField(labelWithString: "Just Aloud")
+            title.font = .systemFont(ofSize: 22, weight: .semibold)
+            title.alignment = .center
+            let version = NSTextField(labelWithString: versionString)
+            version.font = .systemFont(ofSize: 12)
+            version.textColor = .secondaryLabelColor
+            version.alignment = .center
+            version.isSelectable = true
+            version.setAccessibilityLabel("App version")
+
+            let credits = NSTextField(wrappingLabelWithString:
+                "Maintained by Kian Konrad Tajbakhsh.\nBased on Speak11 by Stefano Martiniani.")
+            credits.font = .systemFont(ofSize: 12)
+            credits.alignment = .center
+            let notice = NSTextField(wrappingLabelWithString:
+                "An independent, unofficial project.\nNot affiliated with Speak11 or ElevenLabs.")
+            notice.font = .systemFont(ofSize: 11)
+            notice.textColor = .secondaryLabelColor
+            notice.alignment = .center
+
+            let information = NSPopUpButton(frame: .zero, pullsDown: true)
+            information.bezelStyle = .rounded
+            information.setAccessibilityLabel("Source and licenses")
+            let links = NSMenu()
+            links.addItem(NSMenuItem(title: "Source & Licenses", action: nil, keyEquivalent: ""))
+            for (label, action) in [
+                ("Source Repository", #selector(openSourceRepository)),
+                ("Software License", #selector(openSoftwareLicense)),
+                ("Attribution", #selector(openAttribution)),
+                ("Third-Party Licenses", #selector(openThirdPartyLicenses))
+            ] {
+                let item = NSMenuItem(title: label, action: action, keyEquivalent: "")
+                item.target = self
+                links.addItem(item)
+            }
+            information.menu = links
+
+            let stack = NSStackView(views: [icon, title, version, credits, notice, information])
+            stack.orientation = .vertical
+            stack.alignment = .centerX
+            stack.spacing = 10
+            stack.setCustomSpacing(4, after: title)
+            stack.setCustomSpacing(16, after: version)
+            stack.setCustomSpacing(16, after: notice)
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(stack)
+            NSLayoutConstraint.activate([
+                icon.widthAnchor.constraint(equalToConstant: 80),
+                icon.heightAnchor.constraint(equalToConstant: 80),
+                credits.widthAnchor.constraint(equalToConstant: 352),
+                notice.widthAnchor.constraint(equalToConstant: 352),
+                stack.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+                stack.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+                stack.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor, constant: 24),
+                stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24)
+            ])
+            aboutWindow = window
         }
-
-        NSApp.setActivationPolicy(.regular)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 520),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false)
-        window.title = "About Just Aloud"
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-        window.center()
-
-        let content = NSView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        window.contentView = content
-
-        let icon = NSImageView(image: NSApp.applicationIconImage)
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.imageScaling = .scaleProportionallyUpOrDown
-
-        let title = NSTextField(labelWithString: "Just Aloud")
-        title.font = .systemFont(ofSize: 24, weight: .semibold)
-        title.alignment = .center
-
-        let version = NSTextField(labelWithString: versionString)
-        version.textColor = .secondaryLabelColor
-        version.alignment = .center
-
-        let creator = NSTextField(wrappingLabelWithString:
-            "Created and maintained by Kian Konrad Tajbakhsh.\n\n" +
-            "Based on Speak11, originally created by Stefano Martiniani.\n\n" +
-            "Just Aloud is an independent, unofficial derivative and is not affiliated with or endorsed by the original Speak11 project or ElevenLabs.")
-        creator.alignment = .center
-        creator.maximumNumberOfLines = 0
-
-        let source = NSButton(title: "Source Repository", target: self, action: #selector(openSourceRepository))
-        let license = NSButton(title: "Software License", target: self, action: #selector(openSoftwareLicense))
-        let attribution = NSButton(title: "Attribution", target: self, action: #selector(openAttribution))
-        let thirdParty = NSButton(title: "Third-Party Licenses", target: self, action: #selector(openThirdPartyLicenses))
-        let copyVersion = NSButton(title: "Copy Version Information", target: self, action: #selector(copyVersionInformation))
-        let migrate = NSButton(title: "Migrate from Speak11…", target: self, action: #selector(migrateFromSpeak11))
-        for button in [source, license, attribution, thirdParty, copyVersion, migrate] {
-            button.bezelStyle = .rounded
+        if let visible = screen?.visibleFrame {
+            var frame = window.frame
+            frame.origin = NSPoint(x: visible.midX - frame.width / 2,
+                                   y: visible.midY - frame.height / 2)
+            window.setFrame(frame, display: false)
         }
-
-        let linkRow = NSStackView(views: [source, license, attribution, thirdParty])
-        linkRow.orientation = .horizontal
-        linkRow.spacing = 8
-        linkRow.distribution = .fillEqually
-
-        let welcome = NSButton(title: "Welcome & Setup…", target: self, action: #selector(showWelcome))
-        welcome.bezelStyle = .rounded
-
-        let actionRow = NSStackView(views: [copyVersion, migrate, welcome])
-        actionRow.orientation = .horizontal
-        actionRow.spacing = 8
-        actionRow.distribution = .fillEqually
-
-        let stack = NSStackView(views: [icon, title, version, creator, linkRow, actionRow])
-        stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            content.widthAnchor.constraint(equalToConstant: 620),
-            content.heightAnchor.constraint(equalToConstant: 520),
-            icon.widthAnchor.constraint(equalToConstant: 112),
-            icon.heightAnchor.constraint(equalToConstant: 112),
-            creator.widthAnchor.constraint(equalToConstant: 550),
-            linkRow.widthAnchor.constraint(equalToConstant: 560),
-            actionRow.widthAnchor.constraint(equalToConstant: 560),
-            stack.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -20),
-            stack.centerXAnchor.constraint(equalTo: content.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-        ])
-
-        aboutWindow = window
-        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func openSourceRepository() {
@@ -3082,11 +3592,14 @@ private final class VoiceActionButton: NSButton {
 
     func windowWillClose(_ notification: Notification) {
         guard let closingWindow = notification.object as? NSWindow else { return }
-        if closingWindow === aboutWindow,
-           welcomeWindow?.isVisible != true {
+        if closingWindow === settingsWindow,
+           aboutWindow?.isVisible != true, welcomeWindow?.isVisible != true {
+            NSApp.setActivationPolicy(.accessory)
+        } else if closingWindow === aboutWindow,
+           welcomeWindow?.isVisible != true, settingsWindow?.isVisible != true {
             NSApp.setActivationPolicy(.accessory)
         } else if closingWindow === welcomeWindow,
-                  aboutWindow?.isVisible != true {
+                  aboutWindow?.isVisible != true, settingsWindow?.isVisible != true {
             NSApp.setActivationPolicy(.accessory)
         }
     }
@@ -3221,9 +3734,10 @@ private final class VoiceActionButton: NSButton {
 
     @discardableResult
     private func showAPIKeyDialog(forBackendSwitch: Bool, optional: Bool = false) -> Bool {
-        NSApp.setActivationPolicy(.regular)
-        defer { NSApp.setActivationPolicy(.accessory) }
-        NSApp.activate(ignoringOtherApps: true)
+        let invokingScreen = NSScreen.screens.first {
+            NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
+        } ?? NSScreen.main
+        statusItem?.menu?.cancelTracking()
         let existingKey = readAPIKey()
 
         let skipTitle = optional ? "Skip" : "Cancel"
@@ -3272,7 +3786,7 @@ private final class VoiceActionButton: NSButton {
             alert.accessoryView = field
             alert.window.initialFirstResponder = field
 
-            let response = alert.runModal()
+            let response = runCurrentSpaceAlert(alert, on: invokingScreen)
 
             if response == .alertFirstButtonReturn {
                 let val = field.stringValue.trimmingCharacters(in: .whitespaces)

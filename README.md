@@ -42,7 +42,7 @@ permissions or configuration you need to complete yourself.
 - ElevenLabs cloud synthesis or optional local Kokoro synthesis on Apple Silicon
 - Original adaptive macOS icon and separate monochrome menu-bar template
 - Safe opt-in migration from Speak11 without removing the original installation
-- Native first-launch welcome and setup screen, reopenable from About
+- Native first-launch welcome and setup screen, reopenable from the app menu
 - Native Open at Login control under Settings, with macOS approval-state feedback
 
 ### Download a recording
@@ -78,14 +78,21 @@ balance remains accessible even when the local speech engine is selected.
 and Open at Login, without an extra advanced-settings submenu.
 ElevenLabs-only settings are hidden when using the local engine.
 
+**AI Connector** in Settings explains how local AI assistants can search voices,
+create narration and previews, save delivery presets, track/cancel jobs, and
+export completed WAV audio. Install the optional connector from the app and copy
+its stdio setup instructions. Python 3.9+ is required; a developer checkout and
+Xcode are not required for a bundled app. See [connector setup and limits](agent/README.md).
+The connector is included in the 1.1.0 release.
+
 Existing Style and Speaker Boost preferences are preserved even though they
 no longer have main-menu controls. Unsupported model options are not sent.
 
 ## Requirements
 
 - macOS 13 Ventura or later
-- Universal app for Apple Silicon and Intel; the 1.0.0 runtime validation was
-  performed on Apple Silicon with macOS 26.6.2
+- Universal app for Apple Silicon and Intel; local runtime validation was
+  performed on Apple Silicon
 - Apple Silicon for optional local Kokoro TTS
 - An ElevenLabs API key for cloud synthesis
 - Accessibility permission for the global `⌥⇧/` shortcut
@@ -94,7 +101,7 @@ no longer have main-menu controls. Unsupported model options are not sent.
 
 ### Direct download
 
-Download [Just-Aloud-1.0.0.dmg](https://github.com/Kian-hdr/just-aloud/releases/download/v1.0.0/Just-Aloud-1.0.0.dmg),
+Download [Just-Aloud-1.1.0.dmg](https://github.com/Kian-hdr/just-aloud/releases/download/v1.1.0/Just-Aloud-1.1.0.dmg),
 open the disk image, and drag **Just Aloud.app** onto **Applications**.
 Eject the disk image and open Just Aloud from Applications. No Homebrew or
 installation script is required. Releases are signed with Kian
@@ -137,7 +144,7 @@ GitHub release.
 On first launch, choose **Enable…** in Welcome & Setup and allow Just Aloud in
 **System Settings → Privacy & Security → Accessibility**. This permission is
 used only to read selected text when you press the global `⌥⇧/` shortcut. You
-can reopen the guidance from **About Just Aloud → Welcome & Setup…**.
+can reopen the guidance from **Just Aloud → Welcome & Setup…**.
 
 The upstream preset voice IDs are part of Speak11's public stable source. Custom
 voice IDs are personal data and are never included in this repository.
@@ -182,7 +189,7 @@ service with sensitive text.
 | Keychain service | `just-aloud-api-key` |
 
 Just Aloud never silently uninstalls or overwrites Speak11. Choose
-**About Just Aloud → Migrate from Speak11…** to copy compatible settings and a
+**Just Aloud → Welcome & Setup… → Migrate…** to copy compatible settings and a
 Keychain credential. The original config, app, and Keychain item remain
 unchanged, and the API key is copied through the Security framework without
 being displayed.
@@ -196,6 +203,12 @@ your settings and Keychain credential. Do not use `--zap` if you want to keep da
 For a source installation, `uninstall.command` performs a full cleanup. It removes only Just Aloud's app, scripts,
 Quick Action, config, runtime data, Keychain item, login item, and Accessibility
 entry. Speak11 installations and data are not targeted.
+
+## Local AI agent connector
+
+Generate narration, search voices, save presets and export audio through a local
+stdio MCP server backed by the same speech helpers as the app. See
+[installation, tools and agent examples](agent/README.md). No release is required.
 
 ## Development
 

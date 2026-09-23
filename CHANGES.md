@@ -5,6 +5,14 @@ This file records the independent downstream work relative to
 
 Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
 
+## 1.1.0 (build 4)
+
+- Bundled the optional local agent connector with the application, including
+  voice selection, speed and pause controls, asynchronous jobs, cancellation,
+  presets, and WAV export. It reuses the app's Keychain-backed speech workflow.
+- Refined menu controls and speech-generation error handling while preserving
+  saved voices, settings, and recordings.
+
 ## 1.0.0 (build 3)
 
 - Encoded sentence records losslessly so paragraph newlines, tabs, and Unicode
@@ -98,3 +106,7 @@ Baseline commit: `efc02de6b2c8be25d2845dbd66885aeb15b361d2`.
   release documentation.
 - No signed app, executable, archive, credentials, user configuration, custom
   voice IDs, personal data, logs, caches, or backups are tracked.
+
+## Local agent connector (unreleased)
+
+Added a local stdio MCP connector sharing the app speech backend and WAV exporter, with strict voice/settings validation, native speed, explicit post-speed and pauses, pronunciation dictionary references, presets, asynchronous cancellation, persistent idempotency and local export. Agent requests preserve exact wording and never use automatic provider fallback. Credentials remain in the existing Keychain flow. See `agent/README.md`.

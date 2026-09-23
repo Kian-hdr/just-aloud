@@ -67,6 +67,7 @@ SH
 chmod +x "$STUBS"/*
 
 "$ROOT/install.command" >/dev/null
+cmp "$ROOT/speech-backend.sh" "$TEST_HOME/.local/bin/speech-backend.sh"
 test -x "$TEST_HOME/Applications/Just Aloud.app/Contents/MacOS/JustAloud"
 test -f "$TEST_HOME/Applications/Just Aloud.app/Contents/Resources/Assets.car"
 test -f "$TEST_HOME/Applications/Just Aloud.app/Contents/Resources/JustAloud.icns"
@@ -81,12 +82,14 @@ CUSTOM_VOICE_IDS="fixture_one,fixture_two"
 CUSTOM_VOICE_NAMES_B64="fixture_one:Rml4dHVyZSBPbmU=,fixture_two:Rml4dHVyZSBUd28="
 CFG
 "$ROOT/install.command" >/dev/null
+cmp "$ROOT/speech-backend.sh" "$TEST_HOME/.local/bin/speech-backend.sh"
 grep -q 'fixture_one,fixture_two' "$TEST_HOME/.config/just-aloud/config"
 printf 'PASS: isolated upgrade preserves custom voices\n'
 
 mkdir -p "$TEST_HOME/.config/speak11" "$TEST_HOME/Applications/Speak11.app"
 printf 'VOICE_ID="upstream_fx"\n' > "$TEST_HOME/.config/speak11/config"
 "$ROOT/uninstall.command" >/dev/null
+test ! -e "$TEST_HOME/.local/bin/speech-backend.sh"
 test ! -e "$TEST_HOME/Applications/Just Aloud.app"
 test ! -e "$TEST_HOME/.config/just-aloud"
 test -f "$TEST_HOME/.config/speak11/config"

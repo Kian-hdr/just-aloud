@@ -34,6 +34,7 @@ for source in scripts:
         runtime.mkdir()
         script = bin_dir / 'just-aloud'
         shutil.copy(source, script)
+        shutil.copy(source.parent / "speech-backend.sh", bin_dir / "speech-backend.sh")
         fixture = root / 'silence.wav'
         with wave.open(str(fixture), 'wb') as out:
             out.setparams((1, 2, 44100, 0, 'NONE', 'not compressed'))

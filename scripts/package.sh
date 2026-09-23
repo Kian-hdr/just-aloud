@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.1.0}"
 APP="${APP_PATH:-$ROOT/build/Just Aloud.app}"
 ARTIFACTS="${ARTIFACTS_DIR:-$ROOT/artifacts}"
 ARCHIVE="$ARTIFACTS/Just-Aloud-$VERSION.zip"

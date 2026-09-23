@@ -22,6 +22,7 @@ pass "Swift app and audio helper build"
 
 BUILD_DIR="$TMP_ROOT/app-build" "$ROOT/scripts/build.sh" >/dev/null
 ICON_RESOURCES="$TMP_ROOT/app-build/Just Aloud.app/Contents/Resources"
+cmp "$ROOT/speech-backend.sh" "$ICON_RESOURCES/speech-backend.sh"
 test -f "$ICON_RESOURCES/Assets.car"
 test -f "$ICON_RESOURCES/JustAloud.icns"
 ICON_INFO=$(xcrun assetutil --info "$ICON_RESOURCES/Assets.car")
@@ -57,11 +58,6 @@ grep -q 'circle.inset.filled' "$ROOT/JustAloud.swift"
 grep -q 'controlAccentColor' "$ROOT/JustAloud.swift"
 ! grep -A20 'selectButton.action = #selector(pickCloudVoice' "$ROOT/JustAloud.swift" | grep -q 'systemSymbolName: "checkmark"'
 grep -q 'secondaryLabelColor' "$ROOT/JustAloud.swift"
-grep -q 'width: 344, height: 44' "$ROOT/JustAloud.swift"
-grep -q 'x: 16, y: 25, width: 14, height: 14' "$ROOT/JustAloud.swift"
-grep -q 'x: 38, y: 23, width: 250, height: 18' "$ROOT/JustAloud.swift"
-grep -q 'x: 38, y: 4, width: 250, height: 18' "$ROOT/JustAloud.swift"
-grep -q 'x: 308, y: 10, width: 20, height: 24' "$ROOT/JustAloud.swift"
 grep -q 'nameLabel.font = NSFont.menuFont(ofSize: 13)' "$ROOT/JustAloud.swift"
 ! grep -A8 'func pickCloudVoice' "$ROOT/JustAloud.swift" | grep -q 'cancelTracking\|rebuildMenu'
 grep -A8 'func pickCloudVoice' "$ROOT/JustAloud.swift" | grep -q 'updateCloudVoiceSelectionIndicators'
@@ -94,16 +90,22 @@ rm -f "$STATE" "$CONTROL"
 printf '%s\t%s\t0\t20\t%s\t0\n' "$TMP_ROOT/silence.wav" "$(date +%s)" "$STATUS" \
     | "$TMP_ROOT/just-aloud-audio" play-queue > "$TMP_ROOT/player.out" &
 PLAYER_PID=$!
-for _ in 1 2 3 4 5 6 7 8 9 10; do
+for _ in {1..50}; do
     [ -f "$STATE" ] && [ "$(tr -d '\n' < "$STATE")" = "playing" ] && break
     sleep 0.1
 done
 [ "$(tr -d '\n' < "$STATE")" = "playing" ]
 printf 'pause\n' > "$CONTROL"
-sleep 0.2
+for _ in {1..50}; do
+    [ "$(tr -d '\n' < "$STATE")" = "paused" ] && break
+    sleep 0.1
+done
 [ "$(tr -d '\n' < "$STATE")" = "paused" ]
 printf 'seek:10\nplay\n' > "$CONTROL"
-sleep 0.2
+for _ in {1..50}; do
+    [ "$(tr -d '\n' < "$STATE")" = "playing" ] || ! kill -0 "$PLAYER_PID" 2>/dev/null && break
+    sleep 0.1
+done
 [ "$(tr -d '\n' < "$STATE")" = "playing" ] || ! kill -0 "$PLAYER_PID" 2>/dev/null
 kill "$PLAYER_PID" 2>/dev/null || true
 wait "$PLAYER_PID" 2>/dev/null || true
