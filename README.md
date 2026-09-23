@@ -101,7 +101,7 @@ no longer have main-menu controls. Unsupported model options are not sent.
 
 ### Direct download
 
-Download [Just-Aloud-1.1.0.dmg](https://github.com/Kian-hdr/just-aloud/releases/download/v1.1.0/Just-Aloud-1.1.0.dmg),
+Download [Just-Aloud-1.1.0.dmg](https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg),
 open the disk image, and drag **Just Aloud.app** onto **Applications**.
 Eject the disk image and open Just Aloud from Applications. No Homebrew or
 installation script is required. Releases are signed with Kian
