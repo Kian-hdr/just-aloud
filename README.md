@@ -1,18 +1,18 @@
-# Just Aloud
+<h1 align="center">Just Aloud</h1>
 
-Listen to selected text from your Mac’s menu bar.
+<p align="center">Listen to selected text from your Mac’s menu bar.</p>
 
-<img src="Design/Icon/Previews/icon-composer-Default.png" alt="Just Aloud app icon" width="72">
+<p align="center"><img src="Design/Icon/Previews/icon-composer-Default.png" alt="Just Aloud app icon" width="72"></p>
 
-## Download
+<h2 align="center">Download</h2>
 
-<p>
+<p align="center">
 <a href="https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg"><img src="docs/assets/downloads/download_1.svg" width="240" height="48" alt="Download for macOS"></a>
 </p>
 
-[DMG · v1.1.0](https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg)
+<p align="center"><a href="https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg">DMG · v1.1.0</a></p>
 
-[Install with Homebrew](#homebrew-installation) · [Release notes](https://github.com/Kian-hdr/just-aloud/releases/tag/just-aloud-v1.1.0)
+<p align="center"><a href="#homebrew-installation">Install with Homebrew</a> · <a href="https://github.com/Kian-hdr/just-aloud/releases/tag/just-aloud-v1.1.0">Release notes</a></p>
 
 Just Aloud is a native macOS menu-bar app that reads selected text with
 ElevenLabs or optional local Kokoro TTS, with familiar playback controls and a
