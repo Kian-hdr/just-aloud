@@ -2,7 +2,7 @@
 
 <p align="center">Listen to selected text from your Mac’s menu bar.</p>
 
-<p align="center"><img src="Design/Icon/Previews/icon-composer-Dark.png" width="72" alt="Just Aloud macOS app icon"></p>
+<p align="center"><img src="Design/Icon/Previews/icon-composer-Dark.png" width="96" alt="Just Aloud macOS app icon"></p>
 
 <h2 align="center">Download</h2>
 
