@@ -8,6 +8,12 @@ Just Aloud is a native macOS menu-bar app that reads selected text with
 ElevenLabs or optional local Kokoro TTS, with familiar playback controls and a
 private multi-voice library.
 
+<!-- direct-downloads -->
+[![Download macOS DMG](https://img.shields.io/badge/Download%20macOS%20DMG-24292F?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg) [![Install with Homebrew](https://img.shields.io/badge/Install%20with%20Homebrew-8A4B20?style=for-the-badge&logo=homebrew&logoColor=white)](#homebrew-installation)
+
+[Download macOS DMG](https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg) · [Homebrew instructions](#homebrew-installation) · [Release just-aloud-v1.1.0](https://github.com/Kian-hdr/just-aloud/releases/tag/just-aloud-v1.1.0)
+<!-- /direct-downloads -->
+
 > **Independent and unofficial.** Just Aloud is based on
 > [Speak11](https://github.com/smcantab/speak11), originally created by Stefano
 > Martiniani. It is maintained by Kian Konrad Tajbakhsh and is not affiliated
