@@ -1,12 +1,8 @@
 # Just Aloud
 
-<p align="center">
-  <img src="Design/Icon/Previews/icon-composer-Default.png" alt="Just Aloud app icon" width="180">
-</p>
+Listen to selected text from your Mac’s menu bar.
 
-Just Aloud is a native macOS menu-bar app that reads selected text with
-ElevenLabs or optional local Kokoro TTS, with familiar playback controls and a
-private multi-voice library.
+<img src="Design/Icon/Previews/icon-composer-Default.png" alt="Just Aloud app icon" width="72">
 
 ## Download
 
@@ -17,6 +13,10 @@ private multi-voice library.
 [DMG · v1.1.0](https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg)
 
 [Install with Homebrew](#homebrew-installation) · [Release notes](https://github.com/Kian-hdr/just-aloud/releases/tag/just-aloud-v1.1.0)
+
+Just Aloud is a native macOS menu-bar app that reads selected text with
+ElevenLabs or optional local Kokoro TTS, with familiar playback controls and a
+private multi-voice library.
 
 > **Independent and unofficial.** Just Aloud is based on
 > [Speak11](https://github.com/smcantab/speak11), originally created by Stefano
