@@ -133,7 +133,7 @@ For the interactive source installer, double-click `install.command` or run:
 ### Homebrew installation
 
 ```bash
-brew tap Kian-hdr/tap
+brew tap kian-hdr/apps
 brew install --cask just-aloud
 ```
 

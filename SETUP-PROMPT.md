@@ -48,10 +48,10 @@ signature and backing up an older copy before replacement. Use the installed
 copy, not the mounted image; eject any mounted DMG afterward. Hand administrator
 authentication to me in the normal macOS interface if necessary.
 
-If using Homebrew, inspect the official tap https://github.com/Kian-hdr/homebrew-tap
+If using Homebrew, inspect the official tap https://github.com/Kian-hdr/homebrew-apps
 and its actual cask URL, checksum, requirements, dependencies, and install hooks
-before executing them. The tap command is brew tap Kian-hdr/tap; the fully qualified
-install target is Kian-hdr/tap/just-aloud. Use brew install --cask for a new installation
+before executing them. The tap command is brew tap kian-hdr/apps; the fully qualified
+install target is kian-hdr/apps/just-aloud. Use brew install --cask for a new installation
 or a targeted brew upgrade --cask for an existing outdated one. Review any extra
 dependencies with me before installing them. If my Homebrew version requires
 cask trust, consult its current help, explain it, and ask before granting trust

@@ -28,7 +28,7 @@ Eject the disk image and open the installed app. No installation script is neede
 Or use the separate Homebrew tap:
 
 ```bash
-brew tap Kian-hdr/tap
+brew tap kian-hdr/apps
 brew install --cask just-aloud
 ```
 
