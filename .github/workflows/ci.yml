@@ -18,6 +18,8 @@ jobs:
           fetch-depth: 0
       - name: Fetch stable upstream tag
         run: git fetch --no-tags https://github.com/smcantab/speak11.git refs/tags/v1.1.0:refs/tags/v1.1.0
+      - name: Build unsigned app and audio exporter
+        run: ./scripts/build.sh
       - name: Verify source
         run: ./scripts/verify.sh
       - name: Verify disk-image layout metadata
@@ -25,8 +27,6 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/packaging"
           "$RUNNER_TEMP/packaging/bin/pip" install -r scripts/packaging-requirements.txt
           "$RUNNER_TEMP/packaging/bin/python" tests/dmg-layout-test.py
-      - name: Build unsigned app
-        run: ./scripts/build.sh
       - name: Verify bundle identity
         run: |
           test "$(defaults read "$PWD/build/Just Aloud.app/Contents/Info" CFBundleIdentifier)" = "space.exlumina.justaloud"
