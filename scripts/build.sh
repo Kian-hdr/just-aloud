@@ -64,7 +64,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSHumanReadableCopyright</key><string>© 2026 Kian Konrad Tajbakhsh. Just Aloud brand artwork reserved.</string>
+  <key>NSHumanReadableCopyright</key><string>© 2026 Kian Konrad. Just Aloud brand artwork reserved.</string>
 </dict></plist>
 PLIST
 

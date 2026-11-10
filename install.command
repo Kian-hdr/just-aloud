@@ -621,7 +621,7 @@ if [ "$settings_result" = "Install" ]; then
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
     <key>NSHumanReadableCopyright</key>
-    <string>© 2026 Kian Konrad Tajbakhsh. Just Aloud brand artwork reserved.</string>
+    <string>© 2026 Kian Konrad. Just Aloud brand artwork reserved.</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
