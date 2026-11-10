@@ -20,7 +20,7 @@ private multi-voice library.
 
 > **Independent and unofficial.** Just Aloud is based on
 > [Speak11](https://github.com/smcantab/speak11), originally created by Stefano
-> Martiniani. It is maintained by Kian Konrad Tajbakhsh and is not affiliated
+> Martiniani. It is maintained by Kian Konrad and is not affiliated
 > with or endorsed by Speak11 or ElevenLabs.
 
 | Dark appearance | Light appearance |
