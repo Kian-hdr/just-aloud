@@ -5,7 +5,7 @@ as an official Speak11 or ElevenLabs application.
 
 ## Protected assets
 
-The following are © 2026 Kian Konrad Tajbakhsh, all rights reserved:
+The following are © 2026 Kian Konrad, all rights reserved:
 
 - the Just Aloud name as used for this application;
 - the listening-arc, play, and sound-wave application icon;

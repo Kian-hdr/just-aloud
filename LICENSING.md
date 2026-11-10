@@ -14,7 +14,7 @@ artwork described below.
 ## Brand assets
 
 The Just Aloud name, application icon, menu-bar artwork, and original brand
-artwork are © 2026 Kian Konrad Tajbakhsh. All rights reserved. The Unlicense
+artwork are © 2026 Kian Konrad. All rights reserved. The Unlicense
 grant for source code does not grant permission to use those brand assets to
 represent another product or imply endorsement.
 
