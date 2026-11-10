@@ -252,7 +252,7 @@ Launchpad, and About can select the Aqua, Dark Aqua, or tintable rendition.
 - [`CHANGES.md`](CHANGES.md): downstream changes from Speak11 `v1.1.0`
 
 The Just Aloud name, icon, menu-bar artwork, and original brand artwork are
-© 2026 Kian Konrad Tajbakhsh, all rights reserved. Source code remains under The
+© 2026 Kian Konrad, all rights reserved. Source code remains under The
 Unlicense; dependencies remain under their respective licenses.
 
 OpenAI Codex assisted with parts of the downstream implementation, testing,
