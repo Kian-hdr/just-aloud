@@ -1,10 +1,13 @@
-<h1 align="center">Just Aloud</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/README_Wordmark_Dark.svg">
+    <img src="docs/assets/README_Wordmark_Light.svg" width="194" height="42" alt="Just Aloud">
+  </picture>
+</p>
 
 <p align="center">Listen to selected text from your Mac’s menu bar.</p>
 
 <p align="center"><img src="Design/Icon/Previews/icon-composer-Dark.png" width="96" alt="Just Aloud macOS app icon"></p>
-
-<h2 align="center">Download</h2>
 
 <p align="center">
 <a href="https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg"><img src="docs/assets/downloads/download_1.svg" width="240" height="48" alt="Download for macOS"></a>
@@ -114,8 +117,7 @@ no longer have main-menu controls. Unsupported model options are not sent.
 Download [Just-Aloud-1.1.0.dmg](https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg),
 open the disk image, and drag **Just Aloud.app** onto **Applications**.
 Eject the disk image and open Just Aloud from Applications. No Homebrew or
-installation script is required. Releases are signed with Kian
-Konrad Tajbakhsh's Developer ID certificate and notarized by Apple.
+installation script is required. Releases use Developer ID signing and are notarized by Apple.
 
 For a local source build:
 
