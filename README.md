@@ -7,7 +7,13 @@
 
 <p align="center">Listen to selected text from your Mac’s menu bar.</p>
 
-<p align="center"><img src="Design/Icon/Previews/icon-composer-Dark.png" width="96" alt="Just Aloud macOS app icon"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="Design/Icon/Previews/icon-composer-Dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="Design/Icon/Previews/icon-composer-Default.png">
+    <img src="Design/Icon/Previews/icon-composer-Default.png" width="96" alt="Just Aloud macOS app icon">
+  </picture>
+</p>
 
 <p align="center">
 <a href="https://github.com/Kian-hdr/just-aloud/releases/download/just-aloud-v1.1.0/Just-Aloud-1.1.0.dmg"><img src="docs/assets/downloads/download_1.svg" width="240" height="48" alt="Download for macOS"></a>
